@@ -23,14 +23,9 @@ load_bios:
 
     int 0x13
 
-    jc bios_disk_error
 
     pop bx
     cmp al, bl
-    jne bios_disk_error
-
-    mov bx, success_msg
-    call print_bios
 
     pop dx
     pop cx
@@ -38,17 +33,3 @@ load_bios:
     pop ax
 
     ret
-
-
-bios_disk_error:
-    mov bx, error_msg
-    call print_bios
-    
-    shr ax, 8
-    mov bx, ax
-    call print_hex_bios
-
-    jmp $
-
-error_msg:              db `\r\nERROR Loading Sectors. Code: `, 0
-success_msg:            db `\r\nAdditional Sectors Loaded Successfully!\r\n`, 0
