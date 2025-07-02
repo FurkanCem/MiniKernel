@@ -37,7 +37,7 @@ void putstr(const char *str){
 
 int main(){
     clearwin();
-    const char *welcome_msg = "Calisan kernel, sudeyi seviom coook";
+    const char *welcome_msg = "Working kernel, loving nobody";
     putstr(welcome_msg);
 
     return 0;
