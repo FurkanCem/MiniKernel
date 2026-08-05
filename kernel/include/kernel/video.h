@@ -1,5 +1,5 @@
-#ifndef VIDEO_H
-#define VIDEO_H
+#ifndef KERNEL_VIDEO_H
+#define KERNEL_VIDEO_H
 
 void clearwin(void);
 void putstr(const char *str);

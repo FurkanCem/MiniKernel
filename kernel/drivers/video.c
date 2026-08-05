@@ -1,5 +1,4 @@
-#include "idt.h"
-#include "video.h"
+#include "kernel/video.h"
 
 #define VGA_START 0xB8000
 #define VGA_EXTENT 80 * 25
@@ -12,9 +11,9 @@ typedef struct __attribute__((packed)) {
   char style;
 } vga_char;
 
-volatile vga_char *TEXT_AREA = (vga_char *)VGA_START;
+static volatile vga_char *TEXT_AREA = (vga_char *)VGA_START;
 
-void clearwin() {
+void clearwin(void) {
   vga_char clear_char = {.character = ' ', .style = STYLE_WB};
 
   for (unsigned int i = 0; i < VGA_EXTENT; i++) {
@@ -44,19 +43,4 @@ void putstr_at(const char *str, unsigned int row) {
 
     TEXT_AREA[base + i] = temp;
   }
-}
-
-int main() {
-  clearwin();
-  idt_init();
-
-  const char *welcome_msg = "Working kernel, loving nobody";
-  putstr(welcome_msg);
-  putstr_at("IDT loaded", 1);
-
-  // __asm__ volatile("int3");
-  // volatile int z = 0;
-  // volatile int y = 1 / z;
-
-  return 0;
 }

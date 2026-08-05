@@ -1,8 +1,8 @@
 [bits 64]
-[extern main]
+[extern kernel_main]
 
 section .text
 	global _start
 _start:
-    	call main
+    	call kernel_main
     	jmp $

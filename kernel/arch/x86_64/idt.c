@@ -1,5 +1,4 @@
-#include "idt.h"
-#include "video.h"
+#include "kernel/idt.h"
 
 typedef struct __attribute__((packed)) {
   unsigned short offset_low;
@@ -16,7 +15,7 @@ typedef struct __attribute__((packed)) {
   unsigned long long base;
 } idt_ptr_t;
 
-#define IDT_ENTRIES 32
+#define IDT_ENTRIES 256
 static idt_entry_t idt[IDT_ENTRIES];
 static idt_ptr_t idt_ptr;
 
@@ -68,59 +67,9 @@ extern void isr29(void);
 extern void isr30(void);
 extern void isr31(void);
 
-static const char *exception_names[32] = {"Divide-by-zero",
-                                          "Debug",
-                                          "NMI",
-                                          "Breakpoint",
-                                          "Overflow",
-                                          "Bound Range Exceeded",
-                                          "Invalid Opcode",
-                                          "Device Not Available",
-                                          "Double Fault",
-                                          "Coprocessor Overrun",
-                                          "Invalid TSS",
-                                          "Segment Not Present",
-                                          "Stack-Segment Fault",
-                                          "General Protection Fault",
-                                          "Page Fault",
-                                          "Reserved",
-                                          "x87 Floating-Point",
-                                          "Alignment Check",
-                                          "Machine Check",
-                                          "SIMD Floating-Point",
-                                          "Virtualization",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved",
-                                          "Reserved"};
-
-typedef struct __attribute__((packed)) {
-  unsigned long long r15, r14, r13, r12, r11, r10, r9, r8;
-  unsigned long long rbp, rdi, rsi, rdx, rcx, rbx, rax;
-  unsigned long long vector, error_code;
-  unsigned long long rip, cs, rflags, rsp, ss;
-} registers_t;
-
-void isr_handler(registers_t *regs) {
-  clearwin();
-  putstr("*** CPU EXCEPTION ***");
-
-  const char *name = "Unknown";
-  if (regs->vector < 32)
-    name = exception_names[regs->vector];
-  putstr_at(name, 1);
-
-  for (;;) {
-    __asm__ volatile("cli; hlt");
-  }
-}
+/* IRQ0 (PIT timer) and IRQ1 (keyboard) stubs, defined in irq_stubs.asm. */
+extern void irq0(void);
+extern void irq1(void);
 
 void idt_init(void) {
   idt_set_gate(0, (unsigned long long)isr0);
@@ -155,6 +104,11 @@ void idt_init(void) {
   idt_set_gate(29, (unsigned long long)isr29);
   idt_set_gate(30, (unsigned long long)isr30);
   idt_set_gate(31, (unsigned long long)isr31);
+
+  /* Hardware IRQs land here once pic_remap(0x20, ...) has moved them
+     out of the way of the exception vectors above. */
+  idt_set_gate(32, (unsigned long long)irq0); /* IRQ0: PIT timer */
+  idt_set_gate(33, (unsigned long long)irq1); /* IRQ1: keyboard  */
 
   idt_ptr.limit = sizeof(idt) - 1;
   idt_ptr.base = (unsigned long long)&idt;
