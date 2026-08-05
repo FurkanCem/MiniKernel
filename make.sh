@@ -2,7 +2,10 @@
 (cd bootloader ; nasm -o boot boot.asm)
 boot_result=$?
 
-(make -C kernel)
+if [ ! -d kernel/build ]; then
+    cmake -S kernel -B kernel/build
+fi
+cmake --build kernel/build
 make_result=$?
 
 echo Make Result: $make_result

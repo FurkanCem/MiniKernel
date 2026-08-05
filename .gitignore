@@ -2,6 +2,9 @@
 os.img
 bootloader/boot
 kernel/kernel
+kernel/build/
+kernel/compile_commands.json
+kernel/compile_flags.txt
 kernel/kernel.elf
 
 # Object files (matches the Makefile's own clean rule: *.o and **/*.o)
