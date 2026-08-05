@@ -8,15 +8,16 @@ ASM_SRC = $(shell find . -type f -name "*.asm")
 
 OBJ = ${ASM_SRC:.asm=.o} ${SRC:.c=.o} 
 
+OBJCOPY = objcopy
+
 CCFLAGS = -c 
 LDFLAGS = -Ttext 0x8200
-LDFLAGS_BIN = ${LDFLAGS} --oformat binary
 ASFLAGS = -f elf64
 
 all: kernel kernel.elf
 
-kernel: ${OBJ}
-	${LD} -o $@ ${LDFLAGS_BIN} $^
+kernel: kernel.elf
+	${OBJCOPY} -O binary kernel.elf kernel
 
 kernel.elf: ${OBJ}
 	${LD} -o $@ ${LDFLAGS} $^

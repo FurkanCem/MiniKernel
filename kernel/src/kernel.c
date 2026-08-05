@@ -1,44 +1,62 @@
+#include "idt.h"
+#include "video.h"
+
 #define VGA_START 0xB8000
 #define VGA_EXTENT 80 * 25
+#define VGA_COLS 80
 
 #define STYLE_WB 0x0F
 
 typedef struct __attribute__((packed)) {
-    char character;
-    char style;
+  char character;
+  char style;
 } vga_char;
 
-volatile vga_char *TEXT_AREA = (vga_char*) VGA_START;
+volatile vga_char *TEXT_AREA = (vga_char *)VGA_START;
 
-void clearwin(){
-    vga_char clear_char = {
-        .character=' ',
-        .style=STYLE_WB
-    };
+void clearwin() {
+  vga_char clear_char = {.character = ' ', .style = STYLE_WB};
 
-    for(unsigned int i = 0; i < VGA_EXTENT; i++){
-        TEXT_AREA[i] = clear_char;
-    }
+  for (unsigned int i = 0; i < VGA_EXTENT; i++) {
+    TEXT_AREA[i] = clear_char;
+  }
 }
 
-void putstr(const char *str){
-    for(unsigned int i = 0; str[i] != '\0'; i++){
-        if (i >= VGA_EXTENT)
-            break;
+void putstr(const char *str) {
+  for (unsigned int i = 0; str[i] != '\0'; i++) {
+    if (i >= VGA_EXTENT)
+      break;
 
-        vga_char temp = {
-            .character=str[i],
-            .style=STYLE_WB
-        };
+    vga_char temp = {.character = str[i], .style = STYLE_WB};
 
-        TEXT_AREA[i] = temp;
-    }
+    TEXT_AREA[i] = temp;
+  }
 }
 
-int main(){
-    clearwin();
-    const char *welcome_msg = "Working kernel, loving nobody";
-    putstr(welcome_msg);
+void putstr_at(const char *str, unsigned int row) {
+  unsigned int base = row * VGA_COLS;
 
-    return 0;
+  for (unsigned int i = 0; str[i] != '\0'; i++) {
+    if (base + i >= VGA_EXTENT)
+      break;
+
+    vga_char temp = {.character = str[i], .style = STYLE_WB};
+
+    TEXT_AREA[base + i] = temp;
+  }
+}
+
+int main() {
+  clearwin();
+  idt_init();
+
+  const char *welcome_msg = "Working kernel, loving nobody";
+  putstr(welcome_msg);
+  putstr_at("IDT loaded", 1);
+
+  // __asm__ volatile("int3");
+  // volatile int z = 0;
+  // volatile int y = 1 / z;
+
+  return 0;
 }

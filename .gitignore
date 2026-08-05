@@ -1,0 +1,13 @@
+# Build outputs
+os.img
+bootloader/boot
+kernel/kernel
+kernel/kernel.elf
+
+# Object files (matches the Makefile's own clean rule: *.o and **/*.o)
+*.o
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+.vscode/
