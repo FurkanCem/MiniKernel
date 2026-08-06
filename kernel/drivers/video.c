@@ -44,3 +44,41 @@ void putstr_at(const char *str, unsigned int row) {
     TEXT_AREA[base + i] = temp;
   }
 }
+
+#define INPUT_START_ROW 3
+#define VGA_ROWS 25
+
+static unsigned int cursor_row = INPUT_START_ROW;
+static unsigned int cursor_col = 0;
+
+static void write_cell(unsigned int row, unsigned int col, char c) {
+  unsigned int pos = row * VGA_COLS + col;
+  if (pos >= VGA_EXTENT)
+    return;
+
+  vga_char temp = {.character = c, .style = STYLE_WB};
+  TEXT_AREA[pos] = temp;
+}
+
+void putchar_at_cursor(char c) {
+  if (c == '\n') {
+    cursor_row++;
+    cursor_col = 0;
+  } else if (c == '\b') {
+    if (cursor_col > 0) {
+      cursor_col--;
+      write_cell(cursor_row, cursor_col, ' ');
+    }
+  } else {
+    write_cell(cursor_row, cursor_col, c);
+    cursor_col++;
+    if (cursor_col >= VGA_COLS) {
+      cursor_col = 0;
+      cursor_row++;
+    }
+  }
+
+  if (cursor_row >= VGA_ROWS) {
+    cursor_row = INPUT_START_ROW;
+  }
+}

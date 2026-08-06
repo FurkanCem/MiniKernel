@@ -5,15 +5,17 @@
 - Qemu
 - Gcc compiler
 - Nasm
+- CMake
+- xxd
 - For Arch
 ```
 pacman -Syu
-pacman -S nasm gcc qemu
+pacman -S nasm gcc cmake qemu xxd
 ```
 - For Debian
 ```
 apt update
-apt install nasm gcc qemu
+apt install nasm gcc cmake qemu xxd
 ```
 Should Work
 

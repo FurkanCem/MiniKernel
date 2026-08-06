@@ -1,0 +1,6 @@
+-Iinclude
+-ffreestanding
+-fno-stack-protector
+-Wall
+-Wextra
+-std=gnu11

@@ -105,8 +105,6 @@ void idt_init(void) {
   idt_set_gate(30, (unsigned long long)isr30);
   idt_set_gate(31, (unsigned long long)isr31);
 
-  /* Hardware IRQs land here once pic_remap(0x20, ...) has moved them
-     out of the way of the exception vectors above. */
   idt_set_gate(32, (unsigned long long)irq0); /* IRQ0: PIT timer */
   idt_set_gate(33, (unsigned long long)irq1); /* IRQ1: keyboard  */
 

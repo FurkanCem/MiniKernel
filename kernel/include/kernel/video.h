@@ -5,4 +5,6 @@ void clearwin(void);
 void putstr(const char *str);
 void putstr_at(const char *str, unsigned int row);
 
+void putchar_at_cursor(char c);
+
 #endif

@@ -26,9 +26,10 @@ int kernel_main(void) {
 
   klog_write("MiniKernel: PIC remapped, timer + keyboard IRQs live\n");
 
-  const char *welcome_msg = "Working kernel";
+  const char *welcome_msg = "Working kernel, loving nobody";
   putstr(welcome_msg);
   putstr_at("IDT loaded", 1);
+  putstr_at("Type below:", 2);
 
   // __asm__ volatile ("int3");
   // volatile int z = 0; volatile int y = 1 / z;
