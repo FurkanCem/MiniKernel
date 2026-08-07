@@ -60,6 +60,11 @@ static void write_cell(unsigned int row, unsigned int col, char c) {
   TEXT_AREA[pos] = temp;
 }
 
+void video_reset_cursor(void) {
+  cursor_row = INPUT_START_ROW;
+  cursor_col = 0;
+}
+
 void putchar_at_cursor(char c) {
   if (c == '\n') {
     cursor_row++;

@@ -7,4 +7,6 @@ void putstr_at(const char *str, unsigned int row);
 
 void putchar_at_cursor(char c);
 
+void video_reset_cursor(void);
+
 #endif

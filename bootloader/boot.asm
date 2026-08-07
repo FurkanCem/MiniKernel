@@ -16,12 +16,14 @@ begin_real:
 	mov dx, 0x7E00
 
 	call load_bios
+	call detect_memory_e820
 	call elevate_bios
 
 bootsector_hold:
 	jmp $          
  
 %include "real/load.asm"
+%include "real/e820.asm"
 %include "real/gdt.asm"
 %include "real/elevate.asm"
 boot_drive: 

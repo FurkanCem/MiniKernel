@@ -2,6 +2,8 @@
 
 extern isr_handler
 
+; Vectors that DON'T get an error code pushed by the CPU: fake one with
+; a 0 so every stub leaves the stack in the same shape.
 %macro ISR_NOERR 1
 global isr%1
 isr%1:
@@ -10,6 +12,7 @@ isr%1:
     jmp isr_common_stub
 %endmacro
 
+; Vectors that DO get a real error code pushed automatically (8, 10-14, 17).
 %macro ISR_ERR 1
 global isr%1
 isr%1:
