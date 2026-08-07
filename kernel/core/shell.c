@@ -1,7 +1,10 @@
 #include "kernel/shell.h"
 #include "kernel/e820.h"
+#include "kernel/heap.h"
 #include "kernel/keyboard.h"
 #include "kernel/klog.h"
+#include "kernel/pmm.h"
+#include "kernel/thread.h"
 #include "kernel/video.h"
 
 #define LINE_BUFFER_SIZE 128
@@ -71,6 +74,157 @@ static void print_meminfo(void) {
   print_str("\ntotal usable: ");
   print_hex(e820_total_usable_bytes());
   print_str(" bytes");
+
+  print_str("\n\nframe allocator: ");
+  print_hex(pmm_total_frames());
+  print_str(" total frames, ");
+  print_hex(pmm_free_frames());
+  print_str(" free (");
+  print_hex(pmm_total_frames() - pmm_free_frames());
+  print_str(" used)");
+}
+
+static void print_alloctest(void) {
+  print_str("\nallocating 3 frames:");
+
+  for (int i = 0; i < 3; i++) {
+    unsigned long long addr = pmm_alloc_frame();
+    print_str("\n  frame ");
+    print_hex((unsigned long long)i);
+    print_str(": ");
+    if (addr == 0) {
+      print_str("out of memory");
+    } else {
+      print_hex(addr);
+    }
+  }
+
+  print_str("\nfree frames remaining: ");
+  print_hex(pmm_free_frames());
+}
+
+static void print_vmmtest(void) {
+  print_str("\nallocating frames until one lands past the 2MB mark...");
+
+  unsigned long long addr = 0;
+  unsigned long long attempts = 0;
+  const unsigned long long TWO_MB = 0x200000ULL;
+  const unsigned long long MAX_ATTEMPTS = 100000ULL;
+
+  while (attempts < MAX_ATTEMPTS) {
+    addr = pmm_alloc_frame();
+    attempts++;
+    if (addr == 0) {
+      print_str("\nout of memory before reaching 2MB");
+      return;
+    }
+    if (addr >= TWO_MB)
+      break;
+  }
+
+  print_str("\ngot frame ");
+  print_hex(addr);
+  print_str(" after ");
+  print_hex(attempts);
+  print_str(" allocations");
+
+  volatile unsigned char *ptr = (volatile unsigned char *)addr;
+  unsigned char pattern = 0xA5;
+  *ptr = pattern;
+  unsigned char readback = *ptr;
+
+  print_str("\nwrote 0xA5 to it, read back ");
+  print_hex((unsigned long long)readback);
+  if (readback == pattern) {
+    print_str(" -> OK, paging extension works");
+  } else {
+    print_str(" -> MISMATCH");
+  }
+}
+
+static void print_heaptest(void) {
+  print_str("\nallocating three blocks and writing through them:");
+
+  char *a = (char *)kmalloc(32);
+  char *b = (char *)kmalloc(64);
+  char *c = (char *)kmalloc(16);
+
+  if (a == 0 || b == 0 || c == 0) {
+    print_str("\nkmalloc returned NULL - out of memory");
+    return;
+  }
+
+  for (int i = 0; i < 31; i++)
+    a[i] = 'A';
+  a[31] = '\0';
+  for (int i = 0; i < 63; i++)
+    b[i] = 'B';
+  b[63] = '\0';
+  for (int i = 0; i < 15; i++)
+    c[i] = 'C';
+  c[15] = '\0';
+
+  print_str("\n  a=");
+  print_hex((unsigned long long)a);
+  print_str("\n  b=");
+  print_hex((unsigned long long)b);
+  print_str("\n  c=");
+  print_hex((unsigned long long)c);
+
+  print_str("\nfreeing b, then allocating a similar-sized block:");
+  kfree(b);
+  char *d = (char *)kmalloc(40);
+  print_str("\n  d=");
+  print_hex((unsigned long long)d);
+  if (d == b) {
+    print_str(" (same address as freed b - free list reused it)");
+  } else {
+    print_str(" (different address - grew instead of reusing b this time)");
+  }
+
+  print_str("\ndata still intact after all that: a[0]=");
+  putchar_at_cursor(a[0]);
+  print_str(" c[0]=");
+  putchar_at_cursor(c[0]);
+}
+
+static volatile int demo_a_done = 0;
+static volatile int demo_b_done = 0;
+
+static void demo_thread_a(void) {
+  for (int i = 0; i < 5; i++) {
+    putchar_at_cursor('A');
+    sched_yield();
+  }
+  demo_a_done = 1;
+  for (;;)
+    sched_yield();
+}
+
+static void demo_thread_b(void) {
+  for (int i = 0; i < 5; i++) {
+    putchar_at_cursor('B');
+    sched_yield();
+  }
+  demo_b_done = 1;
+  for (;;)
+    sched_yield();
+}
+
+static void print_threadtest(void) {
+  demo_a_done = 0;
+  demo_b_done = 0;
+
+  print_str("\nspawning two threads that print A/B and yield:\n");
+
+  sched_spawn(demo_thread_a);
+  sched_spawn(demo_thread_b);
+
+  while (!demo_a_done || !demo_b_done) {
+    sched_yield();
+  }
+
+  print_str("\nboth threads finished");
 }
 
 static void print_prompt(void) { print_str("\n> "); }
@@ -83,9 +237,18 @@ static void run_command(const char *line) {
   if (line[0] == '\0') {
     /* empty line - nothing to do, just reprint the prompt below */
   } else if (str_eq(line, "help")) {
-    print_str("\ncommands: help, clear, echo <text>, meminfo");
+    print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
+              "vmmtest, heaptest, threadtest");
   } else if (str_eq(line, "meminfo")) {
     print_meminfo();
+  } else if (str_eq(line, "alloctest")) {
+    print_alloctest();
+  } else if (str_eq(line, "vmmtest")) {
+    print_vmmtest();
+  } else if (str_eq(line, "heaptest")) {
+    print_heaptest();
+  } else if (str_eq(line, "threadtest")) {
+    print_threadtest();
   } else if (str_eq(line, "clear")) {
     clearwin();
     video_reset_cursor();

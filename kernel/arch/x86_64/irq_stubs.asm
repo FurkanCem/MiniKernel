@@ -2,6 +2,9 @@
 
 extern irq_handler
 
+; Hardware IRQs never push an error code, unlike some CPU exceptions -
+; fake one with 0 so the stack shape matches registers_t exactly, the
+; same way isr.asm does for exceptions.
 %macro IRQ 2
 global irq%1
 irq%1:

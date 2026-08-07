@@ -18,10 +18,8 @@ void e820_init(void);
 
 unsigned int e820_entry_count(void);
 
-/* Returns 0 if index is out of range. */
 const e820_entry_t *e820_get_entry(unsigned int index);
 
-/* Sum of the length of every USABLE region, in bytes. */
 unsigned long long e820_total_usable_bytes(void);
 
 const char *e820_type_name(unsigned int type);

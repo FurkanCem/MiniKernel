@@ -10,12 +10,7 @@ typedef struct __attribute__((packed)) {
 static const e820_buffer_t *e820_buffer =
     (const e820_buffer_t *)E820_BUFFER_ADDR;
 
-void e820_init(void) {
-  /* Nothing to do - see the header comment. This exists so the
-     boot sequence in core/main.c has an explicit, documented step
-     for "the memory map is now available", rather than every
-     caller silently assuming a magic address is already valid. */
-}
+void e820_init(void) {}
 
 unsigned int e820_entry_count(void) { return e820_buffer->count; }
 
