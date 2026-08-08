@@ -190,7 +190,6 @@ static void print_heaptest(void) {
 
 static volatile int demo_a_done = 0;
 static volatile int demo_b_done = 0;
-static volatile int id = 0;
 static void demo_thread(void) {
   int id = sched_current_tid();
 

@@ -7,6 +7,8 @@ void pmm_init(void);
 
 unsigned long long pmm_alloc_frame(void);
 
+unsigned long long pmm_alloc_contiguous(unsigned long long count);
+
 void pmm_free_frame(unsigned long long addr);
 
 unsigned long long pmm_total_frames(void);

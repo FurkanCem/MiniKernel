@@ -117,6 +117,35 @@ unsigned long long pmm_alloc_frame(void) {
   return 0;
 }
 
+unsigned long long pmm_alloc_contiguous(unsigned long long count) {
+  if (count == 0)
+    return 0;
+
+  unsigned long long flags = irq_save();
+
+  unsigned long long run_start = 0;
+  unsigned long long run_len = 0;
+
+  for (unsigned long long f = 0; f < PMM_MAX_FRAMES; f++) {
+    if (!is_used(f)) {
+      if (run_len == 0)
+        run_start = f;
+      run_len++;
+      if (run_len == count) {
+        for (unsigned long long i = 0; i < count; i++)
+          set_used(run_start + i);
+        irq_restore(flags);
+        return run_start * PMM_FRAME_SIZE;
+      }
+    } else {
+      run_len = 0;
+    }
+  }
+
+  irq_restore(flags);
+  return 0; /* no run of `count` contiguous free frames anywhere */
+}
+
 void pmm_free_frame(unsigned long long addr) {
   unsigned long long flags = irq_save();
   set_free(frame_of(addr));
