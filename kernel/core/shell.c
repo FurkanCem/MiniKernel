@@ -128,9 +128,6 @@ static void print_vmmtest(void) {
   print_hex(attempts);
   print_str(" allocations");
 
-  /* Before vmm_init() extended the identity map, writing here would
-     have page-faulted - this line is the actual proof the mapping
-     now covers memory the bootloader never mapped. */
   volatile unsigned char *ptr = (volatile unsigned char *)addr;
   unsigned char pattern = 0xA5;
   *ptr = pattern;
@@ -198,7 +195,7 @@ static void demo_thread(void) {
   int id = sched_current_tid();
 
   for (int i = 0; i < 20000000; i++) {
-    if (i % 200000 == 0)
+    if (i % (400 * id) == 0)
       putchar_at_cursor('A' + id);
   }
 

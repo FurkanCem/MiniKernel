@@ -1,5 +1,6 @@
 #include "kernel/thread.h"
 #include "kernel/heap.h"
+#include "kernel/io.h"
 
 #define MAX_THREADS 8
 #define THREAD_STACK_SIZE 4000
@@ -107,11 +108,15 @@ void sched_yield(void) {
   if (current_thread == -1)
     return;
 
+  unsigned long long flags = irq_save();
+
   reap_zombie();
 
   int next = find_next_runnable(current_thread);
-  if (next == current_thread)
+  if (next == current_thread) {
+    irq_restore(flags);
     return;
+  }
 
   threads[current_thread].state = THREAD_READY;
   threads[next].state = THREAD_RUNNING;
@@ -120,11 +125,15 @@ void sched_yield(void) {
   current_thread = next;
 
   switch_context(&threads[prev].rsp, &threads[next].rsp);
+
+  irq_restore(flags);
 }
 
 void sched_exit(void) {
   if (current_thread == -1)
     return;
+
+  unsigned long long flags = irq_save();
 
   reap_zombie();
 
@@ -133,8 +142,9 @@ void sched_exit(void) {
 
   int next = find_next_runnable(current_thread);
   if (next == current_thread) {
+    irq_restore(flags); /* re-enable interrupts or hlt spins forever */
     for (;;)
-      ;
+      __asm__ volatile("hlt");
   }
 
   threads[next].state = THREAD_RUNNING;
@@ -142,6 +152,8 @@ void sched_exit(void) {
 
   unsigned long long discard;
   switch_context(&discard, &threads[next].rsp);
+
+  irq_restore(flags);
 }
 int sched_current_tid(void) { return current_thread; }
 int sched_is_alive(int tid) {
