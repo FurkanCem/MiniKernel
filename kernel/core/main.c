@@ -55,7 +55,7 @@ void kernel_main(void) {
 
   klog_write("MiniKernel: PIC remapped, timer + keyboard IRQs live\n");
 
-  const char *welcome_msg = "Working kernel, loving nobody";
+  const char *welcome_msg = "Working kernel";
   putstr(welcome_msg);
   putstr_at("IDT loaded", 1);
 

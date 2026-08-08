@@ -193,7 +193,17 @@ static void print_heaptest(void) {
 
 static volatile int demo_a_done = 0;
 static volatile int demo_b_done = 0;
+static volatile int id = 0;
+static void demo_thread(void) {
+  int id = sched_current_tid();
 
+  for (int i = 0; i < 20000000; i++) {
+    if (i % 200000 == 0)
+      putchar_at_cursor('A' + id);
+  }
+
+  sched_exit();
+}
 static void demo_thread_a(void) {
   for (int i = 0; i < 20000000; i++) {
     if (i % 200000 == 0)
@@ -228,6 +238,32 @@ static void print_threadtest(void) {
   print_str("\nboth threads finished");
 }
 
+static void print_largeThreadtest(void) {
+  int size = 8;
+  int tids[8];
+
+  for (int i = 0; i < size; i++) {
+    tids[i] = sched_spawn(demo_thread);
+  }
+
+  for (;;) {
+    int finished = 1;
+
+    for (int i = 0; i < size; i++) {
+      if (sched_is_alive(tids[i])) {
+        finished = 0;
+        break;
+      }
+    }
+
+    if (finished)
+      break;
+
+    sched_yield();
+  }
+
+  print_str("\nthreads finished");
+}
 static void print_prompt(void) { print_str("\n> "); }
 
 static void run_command(const char *line) {
@@ -239,7 +275,7 @@ static void run_command(const char *line) {
     /* empty line - nothing to do, just reprint the prompt below */
   } else if (str_eq(line, "help")) {
     print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
-              "vmmtest, heaptest, threadtest");
+              "vmmtest, heaptest, threadtest, largethreadtest");
   } else if (str_eq(line, "meminfo")) {
     print_meminfo();
   } else if (str_eq(line, "alloctest")) {
@@ -250,6 +286,8 @@ static void run_command(const char *line) {
     print_heaptest();
   } else if (str_eq(line, "threadtest")) {
     print_threadtest();
+  } else if (str_eq(line, "largethreadtest")) {
+    print_largeThreadtest();
   } else if (str_eq(line, "clear")) {
     clearwin();
     video_reset_cursor();
