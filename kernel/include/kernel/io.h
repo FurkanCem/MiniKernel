@@ -13,4 +13,14 @@ static inline unsigned char inb(unsigned short port) {
 
 static inline void io_wait(void) { outb(0x80, 0); }
 
+static inline unsigned long long irq_save(void) {
+  unsigned long long flags;
+  __asm__ volatile("pushfq; pop %0; cli" : "=r"(flags)::"memory");
+  return flags;
+}
+
+static inline void irq_restore(unsigned long long flags) {
+  __asm__ volatile("push %0; popfq" ::"r"(flags) : "memory", "cc");
+}
+
 #endif

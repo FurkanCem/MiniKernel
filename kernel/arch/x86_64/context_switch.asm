@@ -2,6 +2,7 @@
 
 global switch_context
 switch_context:
+    pushfq
     push rbp
     push rbx
     push r12
@@ -18,5 +19,6 @@ switch_context:
     pop r12
     pop rbx
     pop rbp
+    popfq
 
     ret

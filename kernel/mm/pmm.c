@@ -1,5 +1,6 @@
 #include "kernel/pmm.h"
 #include "kernel/e820.h"
+#include "kernel/io.h"
 
 extern char _kernel_end[];
 
@@ -93,24 +94,34 @@ void pmm_init(void) {
 
   reserve_range(0x0, 0x8200);
 
+  /* The kernel image itself - code, rodata, data, bss. */
   reserve_range(0x8200, (unsigned long long)_kernel_end);
 
   reserve_range(0xB8000, 0xB8000 + 4000);
 }
 
 unsigned long long pmm_alloc_frame(void) {
+  unsigned long long flags = irq_save();
+
   for (unsigned long long i = 0; i < PMM_MAX_FRAMES; i++) {
     unsigned long long f = (search_hint + i) % PMM_MAX_FRAMES;
     if (!is_used(f)) {
       set_used(f);
       search_hint = f + 1;
+      irq_restore(flags);
       return f * PMM_FRAME_SIZE;
     }
   }
-  return 0; /* out of memory */
+
+  irq_restore(flags);
+  return 0;
 }
 
-void pmm_free_frame(unsigned long long addr) { set_free(frame_of(addr)); }
+void pmm_free_frame(unsigned long long addr) {
+  unsigned long long flags = irq_save();
+  set_free(frame_of(addr));
+  irq_restore(flags);
+}
 
 unsigned long long pmm_total_frames(void) { return total_frames; }
 

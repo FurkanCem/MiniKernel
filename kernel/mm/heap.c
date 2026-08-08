@@ -1,4 +1,5 @@
 #include "kernel/heap.h"
+#include "kernel/io.h"
 #include "kernel/pmm.h"
 
 typedef struct heap_block {
@@ -38,6 +39,8 @@ void *kmalloc(unsigned long long size) {
 
   size = align_up(size, HEAP_ALIGN);
 
+  unsigned long long flags = irq_save();
+
   heap_block_t *block = heap_head;
   while (block != 0) {
     if (block->free && block->size >= size)
@@ -47,8 +50,10 @@ void *kmalloc(unsigned long long size) {
 
   if (block == 0) {
     block = grow_heap();
-    if (block == 0 || block->size < size)
-      return 0; /* out of memory, or request too large for one frame */
+    if (block == 0 || block->size < size) {
+      irq_restore(flags);
+      return 0;
+    }
   }
 
   if (block->size >= size + HEAP_HEADER_SIZE + HEAP_ALIGN) {
@@ -63,6 +68,7 @@ void *kmalloc(unsigned long long size) {
   }
 
   block->free = 0;
+  irq_restore(flags);
   return (void *)((unsigned char *)block + HEAP_HEADER_SIZE);
 }
 
@@ -70,7 +76,9 @@ void kfree(void *ptr) {
   if (ptr == 0)
     return;
 
+  unsigned long long flags = irq_save();
   heap_block_t *block =
       (heap_block_t *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
   block->free = 1;
+  irq_restore(flags);
 }

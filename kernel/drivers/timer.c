@@ -2,6 +2,7 @@
 #include "kernel/pit.h"
 #include "kernel/timer.h"
 #include "kernel/klog.h"
+#include "kernel/thread.h"
 
 static volatile unsigned long long ticks = 0;
 
@@ -14,6 +15,8 @@ static void timer_irq_handler(registers_t *regs){
         klog_write_hex(ticks);
         klog_write(")\n");
     }
+
+    sched_yield();
 }
 
 unsigned long long timer_get_ticks(void){

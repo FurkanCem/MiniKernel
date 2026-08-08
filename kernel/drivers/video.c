@@ -32,6 +32,8 @@ void putstr(const char *str) {
   }
 }
 
+/* Same as putstr but starting at the given text row, so exception
+   output doesn't overwrite whatever was on row 0. */
 void putstr_at(const char *str, unsigned int row) {
   unsigned int base = row * VGA_COLS;
 
@@ -45,6 +47,8 @@ void putstr_at(const char *str, unsigned int row) {
   }
 }
 
+/* Boot messages use rows 0-2 (see core/main.c); live input echo starts
+   below that so it never overwrites them. */
 #define INPUT_START_ROW 3
 #define VGA_ROWS 25
 
@@ -82,7 +86,6 @@ void putchar_at_cursor(char c) {
       cursor_row++;
     }
   }
-
   if (cursor_row >= VGA_ROWS) {
     cursor_row = INPUT_START_ROW;
   }
