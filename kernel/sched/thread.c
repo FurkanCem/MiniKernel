@@ -14,10 +14,6 @@ typedef enum {
   THREAD_ZOMBIE
 } thread_state_t;
 
-/* Quantum length in timer ticks for each priority - not "who runs first"
- * (selection is still plain round robin), but "how long they keep the CPU
- * once picked". At 100Hz a HIGH-priority thread gets a ~80ms slice before
- * being forced to give way; a LOW one gets ~20ms. */
 static const int quantum_ticks[THREAD_PRIO_COUNT] = {
     [THREAD_PRIO_LOW] = 2,
     [THREAD_PRIO_NORMAL] = 4,
@@ -45,9 +41,6 @@ static void reap_zombie(void) {
     return;
 
   if (threads[zombie_slot].guard_page != 0) {
-    /* Give the frames back to the allocator and undo the guard so this
-     * physical memory is ordinary usable RAM again, not a permanent hole
-     * in the address space every time a thread exits. */
     for (unsigned long long i = 0; i < THREAD_STACK_PAGES; i++) {
       pmm_free_frame(threads[zombie_slot].stack_low + i * PMM_FRAME_SIZE);
     }
@@ -103,11 +96,6 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
   if (slot == -1)
     return -1;
 
-  /* One extra frame on the low side of the stack, deliberately left
-   * unmapped: [[GUARD][page 0][page 1]...] with the guard immediately
-   * below the lowest byte the stack is allowed to touch. An overflow now
-   * takes a page fault at a precise, logged address instead of silently
-   * corrupting whatever the heap put next door. */
   unsigned long long region = pmm_alloc_contiguous(THREAD_STACK_PAGES + 1);
   if (region == 0)
     return -1;
@@ -115,12 +103,8 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
   unsigned long long guard_page = region;
   unsigned long long stack_low = region + PMM_FRAME_SIZE;
 
-  /* The whole region came back from vmm_init()'s blanket identity map
-   * already present - explicitly unmap just the guard page. */
   vmm_guard_page(guard_page);
   if (vmm_is_mapped(guard_page)) {
-    /* Splitting the 2MB region failed (out of memory for the new page
-     * table) - back out the frames rather than run without a guard. */
     for (unsigned long long i = 0; i < THREAD_STACK_PAGES + 1; i++)
       pmm_free_frame(region + i * PMM_FRAME_SIZE);
     return -1;

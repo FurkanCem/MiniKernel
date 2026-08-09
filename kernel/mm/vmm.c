@@ -4,6 +4,7 @@
 
 #define PAGE_PRESENT 0x1ULL
 #define PAGE_WRITABLE 0x2ULL
+#define PAGE_USER 0x4ULL
 #define PAGE_SIZE_2MB 0x80ULL /* PS bit - only meaningful at the PD level */
 #define PAGE_ADDR_MASK 0x000FFFFFFFFFF000ULL
 
@@ -44,6 +45,8 @@ static unsigned long long *get_or_create_table(unsigned long long *table,
 
     table[index] = frame | PAGE_PRESENT | PAGE_WRITABLE;
   }
+
+  table[index] |= PAGE_USER;
 
   return (unsigned long long *)(table[index] & PAGE_ADDR_MASK);
 }
@@ -107,8 +110,7 @@ static unsigned long long *get_or_split_pt_entry(unsigned long long virt_addr) {
                 region_flags;
       }
 
-      pd[pdi] = new_pt_frame | PAGE_PRESENT | PAGE_WRITABLE;
-
+      pd[pdi] = new_pt_frame | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
       unsigned long long region_base = virt_addr & ~(PAGE_2MB_SIZE - 1);
       for (unsigned long long off = 0; off < PAGE_2MB_SIZE;
            off += PAGE_4KB_SIZE) {
@@ -127,8 +129,10 @@ static unsigned long long *get_or_split_pt_entry(unsigned long long virt_addr) {
       pt[i] = 0;
     }
 
-    pd[pdi] = new_pt_frame | PAGE_PRESENT | PAGE_WRITABLE;
+    pd[pdi] = new_pt_frame | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
   }
+
+  pd[pdi] |= PAGE_USER;
 
   return &pt[pt_index(virt_addr)];
 }
@@ -171,6 +175,33 @@ int vmm_is_mapped(unsigned long long virt_addr) {
 }
 
 void vmm_guard_page(unsigned long long virt_addr) { vmm_unmap_page(virt_addr); }
+
+void vmm_mark_user(unsigned long long virt_addr) {
+  vmm_map_page(virt_addr, virt_addr, VMM_WRITABLE | VMM_USER);
+}
+
+unsigned long long vmm_debug_walk_flags(unsigned long long virt_addr) {
+  unsigned long long l4 = pml4[pml4_index(virt_addr)] & 0xFFF;
+  if (!(l4 & PAGE_PRESENT))
+    return l4; /* nothing further down exists */
+
+  unsigned long long *pdpt =
+      (unsigned long long *)(pml4[pml4_index(virt_addr)] & PAGE_ADDR_MASK);
+  unsigned long long l3 = pdpt[pdpt_index(virt_addr)] & 0xFFF;
+  if (!(l3 & PAGE_PRESENT))
+    return l4 | (l3 << 12);
+
+  unsigned long long *pd =
+      (unsigned long long *)(pdpt[pdpt_index(virt_addr)] & PAGE_ADDR_MASK);
+  unsigned long long l2 = pd[pd_index(virt_addr)] & 0xFFF;
+  if (!(l2 & PAGE_PRESENT) || (l2 & PAGE_SIZE_2MB))
+    return l4 | (l3 << 12) | (l2 << 24);
+
+  unsigned long long *pt =
+      (unsigned long long *)(pd[pd_index(virt_addr)] & PAGE_ADDR_MASK);
+  unsigned long long l1 = pt[pt_index(virt_addr)] & 0xFFF;
+  return l4 | (l3 << 12) | (l2 << 24) | (l1 << 36);
+}
 
 void vmm_init(void) {
   unsigned long long cr3;

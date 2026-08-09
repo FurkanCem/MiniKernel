@@ -1,4 +1,5 @@
 #include "kernel/e820.h"
+#include "kernel/gdt.h"
 #include "kernel/heap.h"
 #include "kernel/idt.h"
 #include "kernel/keyboard.h"
@@ -16,6 +17,9 @@ void kernel_main(void) {
 
   klog_init();
   klog_write("MiniKernel: log online\n");
+
+  gdt_init();
+  klog_write("MiniKernel: GDT + TSS installed (ring 3 available)\n");
 
   idt_init();
   klog_write("MiniKernel: IDT loaded\n");

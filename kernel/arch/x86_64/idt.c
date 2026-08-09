@@ -1,4 +1,5 @@
 #include "kernel/idt.h"
+#include "kernel/gdt.h"
 
 typedef struct __attribute__((packed)) {
   unsigned short offset_low;
@@ -19,19 +20,27 @@ typedef struct __attribute__((packed)) {
 static idt_entry_t idt[IDT_ENTRIES];
 static idt_ptr_t idt_ptr;
 
-#define KERNEL_CODE_SEG 0x08
+#define KERNEL_CODE_SEG GDT_KERNEL_CODE
 
 /* present=1, ring=00, type=1110 -> 64-bit interrupt gate */
 #define IDT_GATE_INTERRUPT 0x8E
+/* same, but ring=11 - the ONLY gate a CPL=3 `int` instruction is allowed
+ * to target; every other gate stays kernel-only (0x8E) on purpose. */
+#define IDT_GATE_INTERRUPT_DPL3 0xEE
 
-static void idt_set_gate(int n, unsigned long long handler) {
+static void idt_set_gate_attr(int n, unsigned long long handler,
+                              unsigned char type_attr) {
   idt[n].offset_low = (unsigned short)(handler & 0xFFFF);
   idt[n].selector = KERNEL_CODE_SEG;
   idt[n].ist = 0;
-  idt[n].type_attr = IDT_GATE_INTERRUPT;
+  idt[n].type_attr = type_attr;
   idt[n].offset_mid = (unsigned short)((handler >> 16) & 0xFFFF);
   idt[n].offset_high = (unsigned int)((handler >> 32) & 0xFFFFFFFF);
   idt[n].zero = 0;
+}
+
+static void idt_set_gate(int n, unsigned long long handler) {
+  idt_set_gate_attr(n, handler, IDT_GATE_INTERRUPT);
 }
 
 extern void isr0(void);
@@ -71,6 +80,8 @@ extern void isr31(void);
 extern void irq0(void);
 extern void irq1(void);
 
+extern void isr128(void);
+
 void idt_init(void) {
   idt_set_gate(0, (unsigned long long)isr0);
   idt_set_gate(1, (unsigned long long)isr1);
@@ -107,6 +118,8 @@ void idt_init(void) {
 
   idt_set_gate(32, (unsigned long long)irq0); /* IRQ0: PIT timer */
   idt_set_gate(33, (unsigned long long)irq1); /* IRQ1: keyboard  */
+
+  idt_set_gate_attr(128, (unsigned long long)isr128, IDT_GATE_INTERRUPT_DPL3);
 
   idt_ptr.limit = sizeof(idt) - 1;
   idt_ptr.base = (unsigned long long)&idt;

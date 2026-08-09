@@ -1,11 +1,16 @@
 #include "kernel/shell.h"
 #include "kernel/e820.h"
+#include "kernel/gdt.h"
 #include "kernel/heap.h"
 #include "kernel/keyboard.h"
 #include "kernel/klog.h"
 #include "kernel/pmm.h"
 #include "kernel/thread.h"
 #include "kernel/video.h"
+#include "kernel/vmm.h"
+
+extern void enter_usermode(void (*entry)(void), void *user_stack_top);
+extern void user_demo_entry(void);
 
 #define LINE_BUFFER_SIZE 128
 static char line_buffer[LINE_BUFFER_SIZE];
@@ -260,6 +265,51 @@ static void print_largeThreadtest(void) {
 
   print_str("\nthreads finished");
 }
+
+static void usermode_demo_thread(void) {
+  unsigned long long user_stack_frame = pmm_alloc_frame();
+  unsigned long long kernel_rsp0_frame = pmm_alloc_frame();
+  unsigned long long code_page =
+      (unsigned long long)user_demo_entry & ~0xFFFULL;
+
+  if (user_stack_frame == 0 || kernel_rsp0_frame == 0) {
+    print_str("\nusermode: out of memory setting up ring 3");
+    sched_exit();
+  }
+
+  vmm_mark_user(user_stack_frame);
+
+  vmm_mark_user(code_page);
+  vmm_mark_user(code_page + PMM_FRAME_SIZE);
+
+  /* NOTE: TSS.RSP0 is a single, shared field - every ring3->ring0
+   * transition on the whole system lands here, regardless of which
+   * thread was in ring 3. That's fine for this demo (only one thread is
+   * ever in ring 3 at a time), but real multi-threaded ring-3 support
+   * needs RSP0 switched per-thread on every context switch, same as
+   * this thread's own rsp already is. */
+  tss_set_kernel_stack(kernel_rsp0_frame + PMM_FRAME_SIZE);
+
+  enter_usermode(user_demo_entry, (void *)(user_stack_frame + PMM_FRAME_SIZE));
+}
+
+static void print_usermodetest(void) {
+  print_str("\nspawning a ring-3 thread - check the serial/klog output "
+            "for its syscall message:\n");
+
+  int tid = sched_spawn(usermode_demo_thread);
+  if (tid < 0) {
+    print_str("failed to spawn demo thread");
+    return;
+  }
+
+  while (sched_is_alive(tid)) {
+    sched_yield();
+  }
+
+  print_str("\nring-3 thread exited back through SYS_EXIT");
+}
+
 static void print_prompt(void) { print_str("\n> "); }
 
 static void run_command(const char *line) {
@@ -271,7 +321,7 @@ static void run_command(const char *line) {
     /* empty line - nothing to do, just reprint the prompt below */
   } else if (str_eq(line, "help")) {
     print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
-              "vmmtest, heaptest, threadtest, largethreadtest");
+              "vmmtest, heaptest, threadtest, largethreadtest, usermodetest");
   } else if (str_eq(line, "meminfo")) {
     print_meminfo();
   } else if (str_eq(line, "alloctest")) {
@@ -284,6 +334,8 @@ static void run_command(const char *line) {
     print_threadtest();
   } else if (str_eq(line, "largethreadtest")) {
     print_largeThreadtest();
+  } else if (str_eq(line, "usermodetest")) {
+    print_usermodetest();
   } else if (str_eq(line, "clear")) {
     clearwin();
     video_reset_cursor();
