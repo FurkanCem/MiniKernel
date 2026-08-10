@@ -3,7 +3,7 @@
 #include "kernel/pmm.h"
 
 typedef struct heap_block {
-  unsigned long long size; /* usable size, not including this header */
+  unsigned long long size; /* usable size, not including header */
   int free;
   struct heap_block *next;
 } heap_block_t;
@@ -18,16 +18,26 @@ static unsigned long long align_up(unsigned long long value,
   return (value + align - 1) & ~(align - 1);
 }
 
-static heap_block_t *grow_heap(void) {
-  unsigned long long frame = pmm_alloc_frame();
+static heap_block_t *grow_heap(unsigned long long required_size) {
+  unsigned long long total_size = HEAP_HEADER_SIZE + required_size;
+
+  unsigned long long frame_count =
+      (total_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+
+  unsigned long long frame = pmm_alloc_contiguous(frame_count);
+
   if (frame == 0)
-    return 0; /* out of physical memory entirely */
+    return 0;
 
   heap_block_t *block = (heap_block_t *)frame;
-  block->size = PMM_FRAME_SIZE - HEAP_HEADER_SIZE;
+
+  block->size = frame_count * PMM_FRAME_SIZE - HEAP_HEADER_SIZE;
+
   block->free = 1;
   block->next = heap_head;
+
   heap_head = block;
+
   return block;
 }
 
@@ -42,24 +52,31 @@ void *kmalloc(unsigned long long size) {
   unsigned long long flags = irq_save();
 
   heap_block_t *block = heap_head;
+
   while (block != 0) {
     if (block->free && block->size >= size)
       break;
+
     block = block->next;
   }
 
   if (block == 0) {
-    block = grow_heap();
-    if (block == 0 || block->size < size) {
+    block = grow_heap(size);
+
+    if (block == 0) {
       irq_restore(flags);
       return 0;
     }
   }
 
   if (block->size >= size + HEAP_HEADER_SIZE + HEAP_ALIGN) {
+
     unsigned char *raw = (unsigned char *)block;
+
     heap_block_t *remainder = (heap_block_t *)(raw + HEAP_HEADER_SIZE + size);
+
     remainder->size = block->size - size - HEAP_HEADER_SIZE;
+
     remainder->free = 1;
     remainder->next = block->next;
 
@@ -68,7 +85,9 @@ void *kmalloc(unsigned long long size) {
   }
 
   block->free = 0;
+
   irq_restore(flags);
+
   return (void *)((unsigned char *)block + HEAP_HEADER_SIZE);
 }
 
@@ -77,8 +96,11 @@ void kfree(void *ptr) {
     return;
 
   unsigned long long flags = irq_save();
+
   heap_block_t *block =
       (heap_block_t *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
+
   block->free = 1;
+
   irq_restore(flags);
 }

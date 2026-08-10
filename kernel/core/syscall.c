@@ -1,7 +1,24 @@
 #include "kernel/syscall.h"
 #include "kernel/klog.h"
-#include "kernel/panic.h"
 #include "kernel/thread.h"
+#include "kernel/vmm.h"
+
+#define SYS_WRITE_MAX_LEN 4096ULL
+
+static int user_range_ok(unsigned long long vaddr, unsigned long long len) {
+  if (len == 0)
+    return 1;
+
+  vmm_address_space_t space = vmm_current_address_space();
+  unsigned long long start = vaddr & ~0xFFFULL;
+  unsigned long long end = (vaddr + len + 0xFFF) & ~0xFFFULL;
+
+  for (unsigned long long page = start; page < end; page += 0x1000) {
+    if (!vmm_is_user_accessible_in(space, page))
+      return 0;
+  }
+  return 1;
+}
 
 void syscall_handler(registers_t *regs) {
   switch (regs->rax) {
@@ -12,10 +29,27 @@ void syscall_handler(registers_t *regs) {
     regs->rax = 0;
     break;
 
+  case SYS_WRITE: {
+    unsigned long long buf = regs->rsi;
+    unsigned long long len = regs->rdx;
+
+    if (len > SYS_WRITE_MAX_LEN || !user_range_ok(buf, len)) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    klog_write_n((const char *)buf, len);
+    regs->rax = len;
+    break;
+  }
+
+  case SYS_READ:
+    regs->rax = 0;
+    break;
+
   case SYS_EXIT:
     klog_write("syscall: ring-3 thread exiting via SYS_EXIT\n");
-    sched_exit(); /* doesn't return - switches straight to another thread,
-                   * same as a preemption from the timer IRQ */
+    sched_exit();
     break;
 
   default:

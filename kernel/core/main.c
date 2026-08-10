@@ -1,4 +1,5 @@
 #include "kernel/e820.h"
+#include "kernel/fs.h"
 #include "kernel/gdt.h"
 #include "kernel/heap.h"
 #include "kernel/idt.h"
@@ -58,6 +59,8 @@ void kernel_main(void) {
       "sti"); /* interrupts were off since boot - turn them on now */
 
   klog_write("MiniKernel: PIC remapped, timer + keyboard IRQs live\n");
+
+  fs_init();
 
   const char *welcome_msg = "Working kernel";
   putstr(welcome_msg);

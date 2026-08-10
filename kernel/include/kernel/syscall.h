@@ -3,8 +3,10 @@
 
 #include "kernel/idt.h"
 
-#define SYS_WRITE_HELLO 1 /* ring-3 demo: log a fixed message, no args */
-#define SYS_EXIT 2        /* ring-3 demo: terminate the calling thread */
+#define SYS_WRITE_HELLO 1
+#define SYS_EXIT 2
+#define SYS_WRITE 3
+#define SYS_READ 4
 
 void syscall_handler(registers_t *regs);
 

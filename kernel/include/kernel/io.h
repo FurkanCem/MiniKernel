@@ -11,6 +11,16 @@ static inline unsigned char inb(unsigned short port) {
   return ret;
 }
 
+static inline void outw(unsigned short port, unsigned short val) {
+  __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned short inw(unsigned short port) {
+  unsigned short ret;
+  __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
+  return ret;
+}
+
 static inline void io_wait(void) { outb(0x80, 0); }
 
 static inline unsigned long long irq_save(void) {

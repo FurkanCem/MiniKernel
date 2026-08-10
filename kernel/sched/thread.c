@@ -1,10 +1,11 @@
 #include "kernel/thread.h"
+#include "kernel/gdt.h"
 #include "kernel/io.h"
 #include "kernel/pmm.h"
 #include "kernel/vmm.h"
 
 #define MAX_THREADS 8
-#define THREAD_STACK_PAGES 2 /* 8KB usable stack per thread */
+#define THREAD_STACK_PAGES 2
 #define THREAD_STACK_SIZE (THREAD_STACK_PAGES * PMM_FRAME_SIZE)
 
 typedef enum {
@@ -23,10 +24,11 @@ static const int quantum_ticks[THREAD_PRIO_COUNT] = {
 typedef struct {
   unsigned long long rsp;
   thread_state_t state;
-  unsigned long long stack_low;  /* lowest address of the usable stack */
-  unsigned long long guard_page; /* the unmapped page just below it */
+  unsigned long long stack_low;
+  unsigned long long guard_page;
   thread_priority_t priority;
-  int ticks_remaining; /* counts down each sched_tick(); yields at 0 */
+  int ticks_remaining;
+  vmm_address_space_t address_space;
 } thread_t;
 
 static thread_t threads[MAX_THREADS];
@@ -42,7 +44,8 @@ static void reap_zombie(void) {
 
   if (threads[zombie_slot].guard_page != 0) {
     for (unsigned long long i = 0; i < THREAD_STACK_PAGES; i++) {
-      pmm_free_frame(threads[zombie_slot].stack_low + i * PMM_FRAME_SIZE);
+      pmm_free_frame(threads[zombie_slot].stack_low +
+                      i * PMM_FRAME_SIZE);
     }
     vmm_map_page(threads[zombie_slot].guard_page,
                  threads[zombie_slot].guard_page, VMM_WRITABLE);
@@ -53,6 +56,7 @@ static void reap_zombie(void) {
   threads[zombie_slot].stack_low = 0;
   threads[zombie_slot].guard_page = 0;
   threads[zombie_slot].rsp = 0;
+  threads[zombie_slot].address_space = 0;
   zombie_slot = -1;
 }
 
@@ -67,6 +71,32 @@ static int find_next_runnable(int from) {
   return next;
 }
 
+static int alloc_guarded_stack(unsigned long long *out_stack_low,
+                                unsigned long long *out_guard_page) {
+  unsigned long long region = pmm_alloc_contiguous(THREAD_STACK_PAGES + 1);
+  if (region == 0)
+    return -1;
+
+  unsigned long long guard_page = region;
+  unsigned long long stack_low = region + PMM_FRAME_SIZE;
+
+  vmm_guard_page(guard_page);
+  if (vmm_is_mapped(guard_page)) {
+    for (unsigned long long i = 0; i < THREAD_STACK_PAGES + 1; i++)
+      pmm_free_frame(region + i * PMM_FRAME_SIZE);
+    return -1;
+  }
+
+  *out_stack_low = stack_low;
+  *out_guard_page = guard_page;
+  return 0;
+}
+
+static void activate(int tid) {
+  tss_set_kernel_stack(threads[tid].stack_low + THREAD_STACK_SIZE);
+  vmm_switch_address_space(threads[tid].address_space);
+}
+
 void sched_init(void) {
   for (int i = 0; i < MAX_THREADS; i++) {
     threads[i].state = THREAD_UNUSED;
@@ -75,11 +105,20 @@ void sched_init(void) {
     threads[i].rsp = 0;
     threads[i].priority = THREAD_PRIO_NORMAL;
     threads[i].ticks_remaining = quantum_ticks[THREAD_PRIO_NORMAL];
+    threads[i].address_space = 0;
   }
 
+  unsigned long long stack_low = 0, guard_page = 0;
+  alloc_guarded_stack(&stack_low, &guard_page);
+
   threads[0].state = THREAD_RUNNING;
+  threads[0].address_space = vmm_kernel_address_space();
+  threads[0].stack_low = stack_low;
+  threads[0].guard_page = guard_page;
   current_thread = 0;
   zombie_slot = -1;
+
+  activate(0);
 }
 
 int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
@@ -96,19 +135,9 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
   if (slot == -1)
     return -1;
 
-  unsigned long long region = pmm_alloc_contiguous(THREAD_STACK_PAGES + 1);
-  if (region == 0)
+  unsigned long long stack_low, guard_page;
+  if (alloc_guarded_stack(&stack_low, &guard_page) != 0)
     return -1;
-
-  unsigned long long guard_page = region;
-  unsigned long long stack_low = region + PMM_FRAME_SIZE;
-
-  vmm_guard_page(guard_page);
-  if (vmm_is_mapped(guard_page)) {
-    for (unsigned long long i = 0; i < THREAD_STACK_PAGES + 1; i++)
-      pmm_free_frame(region + i * PMM_FRAME_SIZE);
-    return -1;
-  }
 
   unsigned long long *sp =
       (unsigned long long *)(stack_low + THREAD_STACK_SIZE);
@@ -136,12 +165,22 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
   threads[slot].guard_page = guard_page;
   threads[slot].priority = priority;
   threads[slot].ticks_remaining = quantum_ticks[priority];
+  threads[slot].address_space = vmm_kernel_address_space();
 
   return slot;
 }
 
 int sched_spawn(thread_entry_fn entry) {
   return sched_spawn_prio(entry, THREAD_PRIO_NORMAL);
+}
+
+void sched_set_address_space(int tid, vmm_address_space_t space) {
+  if (tid < 0 || tid >= MAX_THREADS)
+    return;
+
+  threads[tid].address_space = space;
+  if (tid == current_thread)
+    vmm_switch_address_space(space);
 }
 
 void sched_yield(void) {
@@ -164,6 +203,7 @@ void sched_yield(void) {
 
   int prev = current_thread;
   current_thread = next;
+  activate(next);
 
   switch_context(&threads[prev].rsp, &threads[next].rsp);
 
@@ -177,7 +217,7 @@ void sched_tick(void) {
   if (--threads[current_thread].ticks_remaining > 0)
     return;
 
-  sched_yield(); /* quantum expired - let someone else run */
+  sched_yield();
 }
 
 void sched_set_priority(int tid, thread_priority_t priority) {
@@ -202,19 +242,21 @@ void sched_exit(void) {
 
   int next = find_next_runnable(current_thread);
   if (next == current_thread) {
-    irq_restore(flags); /* re-enable interrupts or hlt spins forever */
+    irq_restore(flags);
     for (;;)
       __asm__ volatile("hlt");
   }
 
   threads[next].state = THREAD_RUNNING;
   current_thread = next;
+  activate(next);
 
   unsigned long long discard;
   switch_context(&discard, &threads[next].rsp);
 
   irq_restore(flags);
 }
+
 int sched_current_tid(void) { return current_thread; }
 int sched_is_alive(int tid) {
   if (tid < 0 || tid >= MAX_THREADS)

@@ -30,6 +30,14 @@ void serial_write(const char *str) {
   }
 }
 
+void serial_write_n(const char *data, unsigned long long len) {
+  for (unsigned long long i = 0; i < len; i++) {
+    if (data[i] == '\n')
+      serial_putchar('\r');
+    serial_putchar(data[i]);
+  }
+}
+
 void serial_write_hex(unsigned long long value) {
   static const char digits[] = "0123456789ABCDEF";
   serial_write("0x");

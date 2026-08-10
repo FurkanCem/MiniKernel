@@ -1,6 +1,7 @@
 #include "kernel/shell.h"
 #include "kernel/e820.h"
-#include "kernel/gdt.h"
+#include "kernel/elf.h"
+#include "kernel/fs.h"
 #include "kernel/heap.h"
 #include "kernel/keyboard.h"
 #include "kernel/klog.h"
@@ -195,6 +196,7 @@ static void print_heaptest(void) {
 
 static volatile int demo_a_done = 0;
 static volatile int demo_b_done = 0;
+static volatile int id = 0;
 static void demo_thread(void) {
   int id = sched_current_tid();
 
@@ -268,27 +270,25 @@ static void print_largeThreadtest(void) {
 
 static void usermode_demo_thread(void) {
   unsigned long long user_stack_frame = pmm_alloc_frame();
-  unsigned long long kernel_rsp0_frame = pmm_alloc_frame();
   unsigned long long code_page =
       (unsigned long long)user_demo_entry & ~0xFFFULL;
 
-  if (user_stack_frame == 0 || kernel_rsp0_frame == 0) {
+  if (user_stack_frame == 0) {
     print_str("\nusermode: out of memory setting up ring 3");
     sched_exit();
   }
 
-  vmm_mark_user(user_stack_frame);
+  vmm_address_space_t space = vmm_create_address_space();
+  if (space == 0) {
+    print_str("\nusermode: out of memory setting up ring 3");
+    sched_exit();
+  }
 
+  sched_set_address_space(sched_current_tid(), space);
+
+  vmm_mark_user(user_stack_frame);
   vmm_mark_user(code_page);
   vmm_mark_user(code_page + PMM_FRAME_SIZE);
-
-  /* NOTE: TSS.RSP0 is a single, shared field - every ring3->ring0
-   * transition on the whole system lands here, regardless of which
-   * thread was in ring 3. That's fine for this demo (only one thread is
-   * ever in ring 3 at a time), but real multi-threaded ring-3 support
-   * needs RSP0 switched per-thread on every context switch, same as
-   * this thread's own rsp already is. */
-  tss_set_kernel_stack(kernel_rsp0_frame + PMM_FRAME_SIZE);
 
   enter_usermode(user_demo_entry, (void *)(user_stack_frame + PMM_FRAME_SIZE));
 }
@@ -310,6 +310,134 @@ static void print_usermodetest(void) {
   print_str("\nring-3 thread exited back through SYS_EXIT");
 }
 
+#define ELF_STACK_VADDR 0x8000100000ULL
+
+static void elf_demo_thread(void) {
+  vmm_address_space_t space = vmm_create_address_space();
+  if (space == 0) {
+    sched_exit();
+  }
+
+  sched_set_address_space(sched_current_tid(), space);
+
+  unsigned long long entry;
+  if (elf_load(space, tiny_elf_binary, tiny_elf_binary_size, &entry) != 0) {
+    sched_exit();
+  }
+
+  unsigned long long stack_frame = pmm_alloc_frame();
+  if (stack_frame == 0) {
+    sched_exit();
+  }
+
+  vmm_map_page_in(space, ELF_STACK_VADDR, stack_frame, VMM_WRITABLE | VMM_USER);
+
+  enter_usermode((void (*)(void))entry,
+                 (void *)(ELF_STACK_VADDR + PMM_FRAME_SIZE));
+}
+
+static void print_elftest(void) {
+  print_str("\nloading and running a standalone ELF binary in its own "
+            "address space - check the serial/klog output:\n");
+
+  int tid = sched_spawn(elf_demo_thread);
+  if (tid < 0) {
+    print_str("failed to spawn elf demo thread");
+    return;
+  }
+
+  while (sched_is_alive(tid)) {
+    sched_yield();
+  }
+
+  print_str("\nelf process exited back through SYS_EXIT");
+}
+
+static void print_ls(void) {
+  unsigned int count = fs_file_count();
+  if (count == 0) {
+    print_str("\nno filesystem mounted or no files present");
+    return;
+  }
+
+  for (unsigned int i = 0; i < count; i++) {
+    const fs_dirent_t *e = fs_entry(i);
+    if (e == 0)
+      continue;
+    print_str("\n");
+    print_str(e->name);
+  }
+}
+
+static const unsigned char *run_file_data;
+static unsigned long long run_file_size;
+
+static void run_file_thread(void) {
+  vmm_address_space_t space = vmm_create_address_space();
+  if (space == 0) {
+    sched_exit();
+  }
+
+  sched_set_address_space(sched_current_tid(), space);
+
+  unsigned long long entry;
+  if (elf_load(space, run_file_data, run_file_size, &entry) != 0) {
+    sched_exit();
+  }
+
+  unsigned long long stack_frame = pmm_alloc_frame();
+  if (stack_frame == 0) {
+    sched_exit();
+  }
+
+  vmm_map_page_in(space, ELF_STACK_VADDR, stack_frame, VMM_WRITABLE | VMM_USER);
+
+  enter_usermode((void (*)(void))entry,
+                 (void *)(ELF_STACK_VADDR + PMM_FRAME_SIZE));
+}
+
+static void print_run(const char *name) {
+  const fs_dirent_t *entry = fs_find(name);
+  if (entry == 0) {
+    print_str("\nfile not found: ");
+    print_str(name);
+    return;
+  }
+
+  void *buf = kmalloc(entry->size_bytes);
+  if (buf == 0) {
+    print_str("\nout of memory reading file");
+    return;
+  }
+
+  if (fs_read_file(entry, buf) != 0) {
+    print_str("\nfailed to read file from disk");
+    kfree(buf);
+    return;
+  }
+
+  run_file_data = (const unsigned char *)buf;
+  run_file_size = entry->size_bytes;
+
+  print_str("\nloaded ");
+  print_str(name);
+  print_str(" from disk, running it - check serial/klog output:\n");
+
+  int tid = sched_spawn(run_file_thread);
+  if (tid < 0) {
+    print_str("failed to spawn thread");
+    kfree(buf);
+    return;
+  }
+
+  while (sched_is_alive(tid)) {
+    sched_yield();
+  }
+
+  kfree(buf);
+  print_str("\nprocess exited back through SYS_EXIT");
+}
+
 static void print_prompt(void) { print_str("\n> "); }
 
 static void run_command(const char *line) {
@@ -321,7 +449,8 @@ static void run_command(const char *line) {
     /* empty line - nothing to do, just reprint the prompt below */
   } else if (str_eq(line, "help")) {
     print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
-              "vmmtest, heaptest, threadtest, largethreadtest, usermodetest");
+              "vmmtest, heaptest, threadtest, largethreadtest, usermodetest, "
+              "elftest, ls, run <name>");
   } else if (str_eq(line, "meminfo")) {
     print_meminfo();
   } else if (str_eq(line, "alloctest")) {
@@ -336,6 +465,12 @@ static void run_command(const char *line) {
     print_largeThreadtest();
   } else if (str_eq(line, "usermodetest")) {
     print_usermodetest();
+  } else if (str_eq(line, "elftest")) {
+    print_elftest();
+  } else if (str_eq(line, "ls")) {
+    print_ls();
+  } else if (str_starts_with(line, "run ")) {
+    print_run(line + 4);
   } else if (str_eq(line, "clear")) {
     clearwin();
     video_reset_cursor();

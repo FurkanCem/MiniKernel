@@ -3,6 +3,7 @@
 
 void klog_init(void);
 void klog_write(const char *str);
+void klog_write_n(const char *data, unsigned long long len);
 void klog_write_hex(unsigned long long value);
 
 #endif
