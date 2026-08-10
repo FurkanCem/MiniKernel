@@ -44,8 +44,7 @@ static void reap_zombie(void) {
 
   if (threads[zombie_slot].guard_page != 0) {
     for (unsigned long long i = 0; i < THREAD_STACK_PAGES; i++) {
-      pmm_free_frame(threads[zombie_slot].stack_low +
-                      i * PMM_FRAME_SIZE);
+      pmm_free_frame(threads[zombie_slot].stack_low + i * PMM_FRAME_SIZE);
     }
     vmm_map_page(threads[zombie_slot].guard_page,
                  threads[zombie_slot].guard_page, VMM_WRITABLE);
@@ -72,7 +71,7 @@ static int find_next_runnable(int from) {
 }
 
 static int alloc_guarded_stack(unsigned long long *out_stack_low,
-                                unsigned long long *out_guard_page) {
+                               unsigned long long *out_guard_page) {
   unsigned long long region = pmm_alloc_contiguous(THREAD_STACK_PAGES + 1);
   if (region == 0)
     return -1;

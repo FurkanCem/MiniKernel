@@ -196,7 +196,6 @@ static void print_heaptest(void) {
 
 static volatile int demo_a_done = 0;
 static volatile int demo_b_done = 0;
-static volatile int id = 0;
 static void demo_thread(void) {
   int id = sched_current_tid();
 
@@ -311,6 +310,29 @@ static void print_usermodetest(void) {
 }
 
 #define ELF_STACK_VADDR 0x8000100000ULL
+#define ELF_STACK_MAX_SIZE                                                     \
+  (1ULL * 1024 * 1024) /* 1 MiB ceiling, grown on demand */
+
+static int setup_user_stack(vmm_address_space_t space,
+                            unsigned long long *out_stack_top) {
+  unsigned long long stack_top = ELF_STACK_VADDR + ELF_STACK_MAX_SIZE;
+  unsigned long long first_page =
+      (stack_top - PMM_FRAME_SIZE) & ~(PMM_FRAME_SIZE - 1);
+
+  unsigned long long frame = pmm_alloc_frame();
+  if (frame == 0)
+    return -1;
+
+  if (vmm_map_page_in(space, first_page, frame, VMM_WRITABLE | VMM_USER) != 0) {
+    pmm_free_frame(frame);
+    return -1;
+  }
+
+  vmm_register_growable_stack(space, stack_top, ELF_STACK_MAX_SIZE);
+
+  *out_stack_top = stack_top;
+  return 0;
+}
 
 static void elf_demo_thread(void) {
   vmm_address_space_t space = vmm_create_address_space();
@@ -325,15 +347,12 @@ static void elf_demo_thread(void) {
     sched_exit();
   }
 
-  unsigned long long stack_frame = pmm_alloc_frame();
-  if (stack_frame == 0) {
+  unsigned long long stack_top;
+  if (setup_user_stack(space, &stack_top) != 0) {
     sched_exit();
   }
 
-  vmm_map_page_in(space, ELF_STACK_VADDR, stack_frame, VMM_WRITABLE | VMM_USER);
-
-  enter_usermode((void (*)(void))entry,
-                 (void *)(ELF_STACK_VADDR + PMM_FRAME_SIZE));
+  enter_usermode((void (*)(void))entry, (void *)stack_top);
 }
 
 static void print_elftest(void) {
@@ -385,15 +404,12 @@ static void run_file_thread(void) {
     sched_exit();
   }
 
-  unsigned long long stack_frame = pmm_alloc_frame();
-  if (stack_frame == 0) {
+  unsigned long long stack_top;
+  if (setup_user_stack(space, &stack_top) != 0) {
     sched_exit();
   }
 
-  vmm_map_page_in(space, ELF_STACK_VADDR, stack_frame, VMM_WRITABLE | VMM_USER);
-
-  enter_usermode((void (*)(void))entry,
-                 (void *)(ELF_STACK_VADDR + PMM_FRAME_SIZE));
+  enter_usermode((void (*)(void))entry, (void *)stack_top);
 }
 
 static void print_run(const char *name) {

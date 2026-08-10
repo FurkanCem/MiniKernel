@@ -1,6 +1,7 @@
 #include "kernel/syscall.h"
 #include "kernel/klog.h"
 #include "kernel/thread.h"
+#include "kernel/video.h"
 #include "kernel/vmm.h"
 
 #define SYS_WRITE_MAX_LEN 4096ULL
@@ -39,6 +40,7 @@ void syscall_handler(registers_t *regs) {
     }
 
     klog_write_n((const char *)buf, len);
+    putstr((const char *)buf);
     regs->rax = len;
     break;
   }

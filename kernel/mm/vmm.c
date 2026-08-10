@@ -1,5 +1,6 @@
 #include "kernel/vmm.h"
 #include "kernel/e820.h"
+#include "kernel/idt.h"
 #include "kernel/pmm.h"
 
 #define PAGE_PRESENT 0x1ULL
@@ -32,7 +33,7 @@ static inline void invlpg(unsigned long long addr) {
 }
 
 static unsigned long long *get_or_create_table(unsigned long long *table,
-                                                unsigned int index) {
+                                               unsigned int index) {
   if (!(table[index] & PAGE_PRESENT)) {
     unsigned long long frame = pmm_alloc_frame();
     if (frame == 0)
@@ -52,7 +53,7 @@ static unsigned long long *get_or_create_table(unsigned long long *table,
 }
 
 static void map_2mb_identity(unsigned long long *pml4,
-                              unsigned long long phys_addr) {
+                             unsigned long long phys_addr) {
   unsigned long long *pdpt = get_or_create_table(pml4, pml4_index(phys_addr));
   if (pdpt == 0)
     return;
@@ -68,7 +69,7 @@ static void map_2mb_identity(unsigned long long *pml4,
 }
 
 static unsigned long long *get_pd_entry(unsigned long long *pml4,
-                                         unsigned long long virt_addr) {
+                                        unsigned long long virt_addr) {
   if (!(pml4[pml4_index(virt_addr)] & PAGE_PRESENT))
     return 0;
   unsigned long long *pdpt =
@@ -83,7 +84,7 @@ static unsigned long long *get_pd_entry(unsigned long long *pml4,
 }
 
 static unsigned long long *get_or_split_pt_entry(unsigned long long *pml4,
-                                                  unsigned long long virt_addr) {
+                                                 unsigned long long virt_addr) {
   unsigned long long *pdpt = get_or_create_table(pml4, pml4_index(virt_addr));
   if (pdpt == 0)
     return 0;
@@ -145,7 +146,7 @@ static unsigned long long *space_pml4(vmm_address_space_t space) {
 }
 
 int vmm_map_page_in(vmm_address_space_t space, unsigned long long virt_addr,
-                     unsigned long long phys_addr, unsigned long long flags) {
+                    unsigned long long phys_addr, unsigned long long flags) {
   unsigned long long *pte = get_or_split_pt_entry(space_pml4(space), virt_addr);
   if (pte == 0)
     return -1;
@@ -183,7 +184,7 @@ int vmm_is_mapped_in(vmm_address_space_t space, unsigned long long virt_addr) {
 }
 
 int vmm_is_user_accessible_in(vmm_address_space_t space,
-                               unsigned long long virt_addr) {
+                              unsigned long long virt_addr) {
   unsigned long long *pml4 = space_pml4(space);
 
   unsigned long long l4 = pml4[pml4_index(virt_addr)];
@@ -207,7 +208,8 @@ int vmm_is_user_accessible_in(vmm_address_space_t space,
   return (l1 & PAGE_PRESENT) && (l1 & PAGE_USER);
 }
 
-void vmm_guard_page_in(vmm_address_space_t space, unsigned long long virt_addr) {
+void vmm_guard_page_in(vmm_address_space_t space,
+                       unsigned long long virt_addr) {
   vmm_unmap_page_in(space, virt_addr);
 }
 
@@ -216,7 +218,7 @@ void vmm_mark_user_in(vmm_address_space_t space, unsigned long long virt_addr) {
 }
 
 unsigned long long vmm_debug_walk_flags_in(vmm_address_space_t space,
-                                            unsigned long long virt_addr) {
+                                           unsigned long long virt_addr) {
   unsigned long long *pml4 = space_pml4(space);
   unsigned long long l4 = pml4[pml4_index(virt_addr)] & 0xFFF;
   if (!(l4 & PAGE_PRESENT))
@@ -241,9 +243,9 @@ unsigned long long vmm_debug_walk_flags_in(vmm_address_space_t space,
 }
 
 int vmm_map_page(unsigned long long virt_addr, unsigned long long phys_addr,
-                  unsigned long long flags) {
+                 unsigned long long flags) {
   return vmm_map_page_in(vmm_current_address_space(), virt_addr, phys_addr,
-                          flags);
+                         flags);
 }
 
 int vmm_unmap_page(unsigned long long virt_addr) {
@@ -278,6 +280,72 @@ vmm_address_space_t vmm_kernel_address_space(void) {
 
 void vmm_switch_address_space(vmm_address_space_t space) {
   __asm__ volatile("mov %0, %%cr3" : : "r"(space) : "memory");
+}
+
+#define VMM_MAX_STACK_REGIONS 16
+
+typedef struct {
+  int in_use;
+  vmm_address_space_t space;
+  unsigned long long stack_top;   /* exclusive upper bound, where rsp starts */
+  unsigned long long stack_limit; /* inclusive lower bound the stack may grow to */
+} stack_region_t;
+
+static stack_region_t stack_regions[VMM_MAX_STACK_REGIONS];
+
+void vmm_register_growable_stack(vmm_address_space_t space,
+                                 unsigned long long stack_top,
+                                 unsigned long long max_size) {
+  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
+    if (stack_regions[i].in_use)
+      continue;
+
+    stack_regions[i].in_use = 1;
+    stack_regions[i].space = space;
+    stack_regions[i].stack_top = stack_top;
+    stack_regions[i].stack_limit = stack_top - max_size;
+    return;
+  }
+}
+
+void vmm_unregister_growable_stack(vmm_address_space_t space) {
+  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
+    if (stack_regions[i].in_use && stack_regions[i].space == space) {
+      stack_regions[i].in_use = 0;
+      return;
+    }
+  }
+}
+
+int vmm_handle_page_fault(unsigned long long fault_addr, registers_t *regs) {
+  (void)regs;
+
+  vmm_address_space_t space = vmm_current_address_space();
+  unsigned long long page = fault_addr & ~(PAGE_4KB_SIZE - 1);
+
+  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
+    if (!stack_regions[i].in_use || stack_regions[i].space != space)
+      continue;
+
+    if (page < stack_regions[i].stack_limit || page >= stack_regions[i].stack_top)
+      continue;
+
+    if (vmm_is_mapped_in(space, page))
+      return 0; /* already backed - this is a real fault, not stack growth */
+
+    unsigned long long frame = pmm_alloc_frame();
+    if (frame == 0)
+      return 0; /* out of memory - let it panic */
+
+    if (vmm_map_page_in(space, page, frame, VMM_WRITABLE | VMM_USER) != 0) {
+      pmm_free_frame(frame);
+      return 0;
+    }
+
+    return 1;
+  }
+
+  return 0;
 }
 
 vmm_address_space_t vmm_create_address_space(void) {
