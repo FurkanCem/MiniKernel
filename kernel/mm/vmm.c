@@ -1,6 +1,5 @@
 #include "kernel/vmm.h"
 #include "kernel/e820.h"
-#include "kernel/idt.h"
 #include "kernel/pmm.h"
 
 #define PAGE_PRESENT 0x1ULL
@@ -280,72 +279,6 @@ vmm_address_space_t vmm_kernel_address_space(void) {
 
 void vmm_switch_address_space(vmm_address_space_t space) {
   __asm__ volatile("mov %0, %%cr3" : : "r"(space) : "memory");
-}
-
-#define VMM_MAX_STACK_REGIONS 16
-
-typedef struct {
-  int in_use;
-  vmm_address_space_t space;
-  unsigned long long stack_top;   /* exclusive upper bound, where rsp starts */
-  unsigned long long stack_limit; /* inclusive lower bound the stack may grow to */
-} stack_region_t;
-
-static stack_region_t stack_regions[VMM_MAX_STACK_REGIONS];
-
-void vmm_register_growable_stack(vmm_address_space_t space,
-                                 unsigned long long stack_top,
-                                 unsigned long long max_size) {
-  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
-    if (stack_regions[i].in_use)
-      continue;
-
-    stack_regions[i].in_use = 1;
-    stack_regions[i].space = space;
-    stack_regions[i].stack_top = stack_top;
-    stack_regions[i].stack_limit = stack_top - max_size;
-    return;
-  }
-}
-
-void vmm_unregister_growable_stack(vmm_address_space_t space) {
-  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
-    if (stack_regions[i].in_use && stack_regions[i].space == space) {
-      stack_regions[i].in_use = 0;
-      return;
-    }
-  }
-}
-
-int vmm_handle_page_fault(unsigned long long fault_addr, registers_t *regs) {
-  (void)regs;
-
-  vmm_address_space_t space = vmm_current_address_space();
-  unsigned long long page = fault_addr & ~(PAGE_4KB_SIZE - 1);
-
-  for (int i = 0; i < VMM_MAX_STACK_REGIONS; i++) {
-    if (!stack_regions[i].in_use || stack_regions[i].space != space)
-      continue;
-
-    if (page < stack_regions[i].stack_limit || page >= stack_regions[i].stack_top)
-      continue;
-
-    if (vmm_is_mapped_in(space, page))
-      return 0; /* already backed - this is a real fault, not stack growth */
-
-    unsigned long long frame = pmm_alloc_frame();
-    if (frame == 0)
-      return 0; /* out of memory - let it panic */
-
-    if (vmm_map_page_in(space, page, frame, VMM_WRITABLE | VMM_USER) != 0) {
-      pmm_free_frame(frame);
-      return 0;
-    }
-
-    return 1;
-  }
-
-  return 0;
 }
 
 vmm_address_space_t vmm_create_address_space(void) {

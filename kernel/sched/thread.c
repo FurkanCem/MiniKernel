@@ -1,10 +1,12 @@
 #include "kernel/thread.h"
 #include "kernel/gdt.h"
+#include "kernel/heap.h"
 #include "kernel/io.h"
 #include "kernel/pmm.h"
 #include "kernel/vmm.h"
+#include "kernel/vmm_stack.h"
 
-#define MAX_THREADS 8
+#define INITIAL_THREAD_CAPACITY 4
 #define THREAD_STACK_PAGES 2
 #define THREAD_STACK_SIZE (THREAD_STACK_PAGES * PMM_FRAME_SIZE)
 
@@ -31,12 +33,61 @@ typedef struct {
   vmm_address_space_t address_space;
 } thread_t;
 
-static thread_t threads[MAX_THREADS];
+static thread_t *threads = 0;
+static int thread_capacity = 0;
 static int current_thread = -1;
 static int zombie_slot = -1;
 
 extern void switch_context(unsigned long long *old_rsp,
                            unsigned long long *new_rsp);
+
+static void init_thread_slot(thread_t *t) {
+  t->state = THREAD_UNUSED;
+  t->stack_low = 0;
+  t->guard_page = 0;
+  t->rsp = 0;
+  t->priority = THREAD_PRIO_NORMAL;
+  t->ticks_remaining = quantum_ticks[THREAD_PRIO_NORMAL];
+  t->address_space = 0;
+}
+
+static void copy_thread_slot(thread_t *dst, const thread_t *src) {
+  dst->rsp = src->rsp;
+  dst->state = src->state;
+  dst->stack_low = src->stack_low;
+  dst->guard_page = src->guard_page;
+  dst->priority = src->priority;
+  dst->ticks_remaining = src->ticks_remaining;
+  dst->address_space = src->address_space;
+}
+
+static int grow_thread_table(void) {
+  int new_capacity =
+      thread_capacity == 0 ? INITIAL_THREAD_CAPACITY : thread_capacity * 2;
+
+  thread_t *new_table =
+      (thread_t *)kmalloc(sizeof(thread_t) * (unsigned long long)new_capacity);
+  if (new_table == 0)
+    return -1;
+
+  unsigned long long flags = irq_save();
+
+  for (int i = 0; i < thread_capacity; i++)
+    copy_thread_slot(&new_table[i], &threads[i]);
+  for (int i = thread_capacity; i < new_capacity; i++)
+    init_thread_slot(&new_table[i]);
+
+  thread_t *old_table = threads;
+  threads = new_table;
+  thread_capacity = new_capacity;
+
+  irq_restore(flags);
+
+  if (old_table != 0)
+    kfree(old_table);
+
+  return 0;
+}
 
 static void reap_zombie(void) {
   if (zombie_slot == -1)
@@ -51,6 +102,10 @@ static void reap_zombie(void) {
     pmm_free_frame(threads[zombie_slot].guard_page);
   }
 
+  if (threads[zombie_slot].address_space != vmm_kernel_address_space()) {
+    vmm_unregister_growable_stack(threads[zombie_slot].address_space);
+  }
+
   threads[zombie_slot].state = THREAD_UNUSED;
   threads[zombie_slot].stack_low = 0;
   threads[zombie_slot].guard_page = 0;
@@ -61,8 +116,8 @@ static void reap_zombie(void) {
 
 static int find_next_runnable(int from) {
   int next = from;
-  for (int i = 0; i < MAX_THREADS; i++) {
-    next = (next + 1) % MAX_THREADS;
+  for (int i = 0; i < thread_capacity; i++) {
+    next = (next + 1) % thread_capacity;
     if (threads[next].state == THREAD_READY ||
         threads[next].state == THREAD_RUNNING)
       break;
@@ -97,15 +152,7 @@ static void activate(int tid) {
 }
 
 void sched_init(void) {
-  for (int i = 0; i < MAX_THREADS; i++) {
-    threads[i].state = THREAD_UNUSED;
-    threads[i].stack_low = 0;
-    threads[i].guard_page = 0;
-    threads[i].rsp = 0;
-    threads[i].priority = THREAD_PRIO_NORMAL;
-    threads[i].ticks_remaining = quantum_ticks[THREAD_PRIO_NORMAL];
-    threads[i].address_space = 0;
-  }
+  grow_thread_table();
 
   unsigned long long stack_low = 0, guard_page = 0;
   alloc_guarded_stack(&stack_low, &guard_page);
@@ -125,14 +172,19 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
     priority = THREAD_PRIO_NORMAL;
 
   int slot = -1;
-  for (int i = 0; i < MAX_THREADS; i++) {
+  for (int i = 0; i < thread_capacity; i++) {
     if (threads[i].state == THREAD_UNUSED) {
       slot = i;
       break;
     }
   }
-  if (slot == -1)
-    return -1;
+
+  if (slot == -1) {
+    int previous_capacity = thread_capacity;
+    if (grow_thread_table() != 0)
+      return -1;
+    slot = previous_capacity;
+  }
 
   unsigned long long stack_low, guard_page;
   if (alloc_guarded_stack(&stack_low, &guard_page) != 0)
@@ -174,7 +226,7 @@ int sched_spawn(thread_entry_fn entry) {
 }
 
 void sched_set_address_space(int tid, vmm_address_space_t space) {
-  if (tid < 0 || tid >= MAX_THREADS)
+  if (tid < 0 || tid >= thread_capacity)
     return;
 
   threads[tid].address_space = space;
@@ -220,7 +272,7 @@ void sched_tick(void) {
 }
 
 void sched_set_priority(int tid, thread_priority_t priority) {
-  if (tid < 0 || tid >= MAX_THREADS)
+  if (tid < 0 || tid >= thread_capacity)
     return;
   if (priority < 0 || priority >= THREAD_PRIO_COUNT)
     return;
@@ -258,7 +310,7 @@ void sched_exit(void) {
 
 int sched_current_tid(void) { return current_thread; }
 int sched_is_alive(int tid) {
-  if (tid < 0 || tid >= MAX_THREADS)
+  if (tid < 0 || tid >= thread_capacity)
     return 0;
 
   return threads[tid].state == THREAD_READY ||

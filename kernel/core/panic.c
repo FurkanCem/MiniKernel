@@ -1,7 +1,7 @@
 #include "kernel/panic.h"
 #include "kernel/klog.h"
 #include "kernel/video.h"
-#include "kernel/vmm.h"
+#include "kernel/vmm_stack.h"
 
 static void halt_forever(void) {
   for (;;) {

@@ -1,11 +1,6 @@
 #include "kernel/elf.h"
 #include "kernel/pmm.h"
 
-const unsigned char tiny_elf_binary[] = {
-127,69,76,70,2,1,1,0,0,0,0,0,0,0,0,0,2,0,62,0,1,0,0,0,120,0,0,0,128,0,0,0,64,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,64,0,56,0,1,0,0,0,0,0,0,0,1,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,128,0,0,0,0,0,0,0,128,0,0,0,220,0,0,0,0,0,0,0,220,0,0,0,0,0,0,0,0,16,0,0,0,0,0,0,72,184,3,0,0,0,0,0,0,0,72,191,1,0,0,0,0,0,0,0,72,190,176,0,0,0,128,0,0,0,72,186,44,0,0,0,0,0,0,0,205,128,72,184,2,0,0,0,0,0,0,0,205,128,235,254,104,101,108,108,111,32,102,114,111,109,32,97,32,114,101,97,108,32,101,108,102,32,115,121,115,99,97,108,108,32,118,105,97,32,115,121,115,95,119,114,105,116,101,10
-};
-const unsigned long long tiny_elf_binary_size = sizeof(tiny_elf_binary);
-
 typedef struct __attribute__((packed)) {
   unsigned char e_ident[16];
   unsigned short e_type;
@@ -36,6 +31,8 @@ typedef struct __attribute__((packed)) {
 
 #define PT_LOAD 1
 #define PAGE_SIZE_4K 4096ULL
+#define ELF_MACHINE_X86_64 0x3E
+#define ELF_CLASS_64 2
 
 static int load_segment(vmm_address_space_t space, const unsigned char *data,
                          unsigned long long size, const elf64_phdr_t *ph) {
@@ -92,9 +89,9 @@ int elf_load(vmm_address_space_t space, const unsigned char *data,
   if (eh->e_ident[0] != 0x7F || eh->e_ident[1] != 'E' ||
       eh->e_ident[2] != 'L' || eh->e_ident[3] != 'F')
     return -1;
-  if (eh->e_ident[4] != 2)
+  if (eh->e_ident[4] != ELF_CLASS_64)
     return -1;
-  if (eh->e_machine != 0x3E)
+  if (eh->e_machine != ELF_MACHINE_X86_64)
     return -1;
 
   if (eh->e_phoff + (unsigned long long)eh->e_phnum * eh->e_phentsize > size)
