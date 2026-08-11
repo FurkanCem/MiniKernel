@@ -40,7 +40,9 @@ void syscall_handler(registers_t *regs) {
     }
 
     klog_write_n((const char *)buf, len);
-    putstr((const char *)buf);
+    for (unsigned long long i = 0; i < len; i++) {
+      putchar_at_cursor(((const char *)buf)[i]);
+    }
     regs->rax = len;
     break;
   }

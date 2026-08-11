@@ -1,7 +1,11 @@
 #include "kernel/panic.h"
 #include "kernel/klog.h"
+#include "kernel/thread.h"
 #include "kernel/video.h"
 #include "kernel/vmm_stack.h"
+
+#define CS_RPL_MASK 0x3
+#define CS_RPL_USER 0x3
 
 static void halt_forever(void) {
   for (;;) {
@@ -24,7 +28,31 @@ static void log_common_regs(registers_t *regs) {
   klog_write("\n");
 }
 
+static int fault_from_usermode(registers_t *regs) {
+  if (regs == 0)
+    return 0;
+
+  return (regs->cs & CS_RPL_MASK) == CS_RPL_USER;
+}
+
+static void kill_faulting_process(const char *reason, registers_t *regs) {
+  klog_write("\n*** user process crashed: ");
+  klog_write(reason);
+  klog_write(" (tid ");
+  klog_write_hex((unsigned long long)sched_current_tid());
+  klog_write(") ***\n");
+
+  log_common_regs(regs);
+
+  sched_exit();
+}
+
 void kpanic(const char *reason, registers_t *regs) {
+  if (fault_from_usermode(regs)) {
+    kill_faulting_process(reason, regs);
+    return;
+  }
+
   clearwin();
   putstr("*** KERNEL PANIC ***");
   putstr_at(reason, 1);
@@ -45,6 +73,11 @@ void kpanic_page_fault(unsigned long long fault_addr, registers_t *regs) {
    */
   if (vmm_handle_page_fault(fault_addr, regs))
     return;
+
+  if (fault_from_usermode(regs)) {
+    kill_faulting_process("Page Fault", regs);
+    return;
+  }
 
   clearwin();
   putstr("*** KERNEL PANIC ***");
