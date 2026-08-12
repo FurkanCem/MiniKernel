@@ -4,5 +4,6 @@
 void keyboard_driver_init(void);
 
 int kbd_read_char(char *out);
+char kbd_getchar(void);
 
 #endif

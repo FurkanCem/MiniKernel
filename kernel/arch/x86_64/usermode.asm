@@ -17,6 +17,10 @@ enter_usermode:
     push qword 0x002
     push qword USER_CODE_SEL   ; CS
     push rdi                   ; RIP
+
+    mov rdi, rdx                ; arg0 -> entered program's rdi
+    mov rsi, rcx                ; arg1 -> entered program's rsi
+
     iretq
 
 global user_demo_entry

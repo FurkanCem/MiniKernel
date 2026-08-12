@@ -106,12 +106,7 @@ __attribute__((noreturn)) void shell_run(void) {
   print_prompt();
 
   for (;;) {
-    char c;
-
-    if (!kbd_read_char(&c)) {
-      __asm__ volatile("hlt");
-      continue;
-    }
+    char c = kbd_getchar();
 
     if (c == '\n') {
       line_buffer[line_length] = '\0';

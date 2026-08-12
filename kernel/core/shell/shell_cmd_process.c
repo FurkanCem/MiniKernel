@@ -15,9 +15,7 @@ void cmd_usermodetest(void) {
     return;
   }
 
-  while (sched_is_alive(tid)) {
-    sched_yield();
-  }
+  sched_wait(tid);
 
   print_str("\nring-3 thread exited back through SYS_EXIT");
 }
@@ -32,9 +30,7 @@ void cmd_elftest(void) {
     return;
   }
 
-  while (sched_is_alive(tid)) {
-    sched_yield();
-  }
+  sched_wait(tid);
 
   print_str("\nelf process exited back through SYS_EXIT");
 }
@@ -87,9 +83,7 @@ void cmd_run(const char *name) {
     return;
   }
 
-  while (sched_is_alive(tid)) {
-    sched_yield();
-  }
+  sched_wait(tid);
 
   kfree(buf);
   print_str("\nprocess exited back through SYS_EXIT");

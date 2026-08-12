@@ -14,6 +14,7 @@ typedef enum {
   THREAD_UNUSED,
   THREAD_READY,
   THREAD_RUNNING,
+  THREAD_BLOCKED,
   THREAD_ZOMBIE
 } thread_state_t;
 
@@ -31,6 +32,8 @@ typedef struct {
   thread_priority_t priority;
   int ticks_remaining;
   vmm_address_space_t address_space;
+  const void *wait_channel;
+  fd_slot_t fds[THREAD_MAX_FDS];
 } thread_t;
 
 static thread_t *threads = 0;
@@ -41,6 +44,12 @@ static int zombie_slot = -1;
 extern void switch_context(unsigned long long *old_rsp,
                            unsigned long long *new_rsp);
 
+static void reset_fd_slot(fd_slot_t *fd) {
+  fd->kind = FD_KIND_UNUSED;
+  fd->handle = -1;
+  fd->cursor = 0;
+}
+
 static void init_thread_slot(thread_t *t) {
   t->state = THREAD_UNUSED;
   t->stack_low = 0;
@@ -49,6 +58,10 @@ static void init_thread_slot(thread_t *t) {
   t->priority = THREAD_PRIO_NORMAL;
   t->ticks_remaining = quantum_ticks[THREAD_PRIO_NORMAL];
   t->address_space = 0;
+  t->wait_channel = 0;
+  for (int i = 0; i < THREAD_MAX_FDS; i++) {
+    reset_fd_slot(&t->fds[i]);
+  }
 }
 
 static void copy_thread_slot(thread_t *dst, const thread_t *src) {
@@ -59,6 +72,12 @@ static void copy_thread_slot(thread_t *dst, const thread_t *src) {
   dst->priority = src->priority;
   dst->ticks_remaining = src->ticks_remaining;
   dst->address_space = src->address_space;
+  dst->wait_channel = src->wait_channel;
+  for (int i = 0; i < THREAD_MAX_FDS; i++) {
+    dst->fds[i].kind = src->fds[i].kind;
+    dst->fds[i].handle = src->fds[i].handle;
+    dst->fds[i].cursor = src->fds[i].cursor;
+  }
 }
 
 static int grow_thread_table(void) {
@@ -111,6 +130,10 @@ static void reap_zombie(void) {
   threads[zombie_slot].guard_page = 0;
   threads[zombie_slot].rsp = 0;
   threads[zombie_slot].address_space = 0;
+  threads[zombie_slot].wait_channel = 0;
+  for (int i = 0; i < THREAD_MAX_FDS; i++) {
+    reset_fd_slot(&threads[zombie_slot].fds[i]);
+  }
   zombie_slot = -1;
 }
 
@@ -271,6 +294,90 @@ void sched_tick(void) {
   sched_yield();
 }
 
+void sched_sleep(const void *channel) {
+  unsigned long long flags = irq_save();
+
+  threads[current_thread].wait_channel = channel;
+  threads[current_thread].state = THREAD_BLOCKED;
+
+  int next = find_next_runnable(current_thread);
+
+  if (next == current_thread) {
+    irq_restore(flags);
+
+    while (threads[current_thread].state == THREAD_BLOCKED) {
+      __asm__ volatile("hlt");
+    }
+
+    threads[current_thread].state = THREAD_RUNNING;
+    return;
+  }
+
+  int prev = current_thread;
+  threads[next].state = THREAD_RUNNING;
+  threads[next].ticks_remaining = quantum_ticks[threads[next].priority];
+  current_thread = next;
+  activate(next);
+
+  switch_context(&threads[prev].rsp, &threads[next].rsp);
+
+  irq_restore(flags);
+}
+
+void sched_wakeup(const void *channel) {
+  unsigned long long flags = irq_save();
+
+  for (int i = 0; i < thread_capacity; i++) {
+    if (threads[i].state == THREAD_BLOCKED && threads[i].wait_channel == channel) {
+      threads[i].state = THREAD_READY;
+      threads[i].wait_channel = 0;
+    }
+  }
+
+  irq_restore(flags);
+}
+
+void sched_wait(int tid) {
+  while (sched_is_alive(tid)) {
+    sched_sleep((const void *)(unsigned long long)tid);
+  }
+}
+
+int sched_fd_open(int kind, int handle) {
+  if (current_thread == -1)
+    return -1;
+
+  thread_t *t = &threads[current_thread];
+  for (int i = 0; i < THREAD_MAX_FDS; i++) {
+    if (t->fds[i].kind == FD_KIND_UNUSED) {
+      t->fds[i].kind = kind;
+      t->fds[i].handle = handle;
+      t->fds[i].cursor = 0;
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+int sched_fd_close(int fd) {
+  if (current_thread == -1 || fd < 0 || fd >= THREAD_MAX_FDS)
+    return -1;
+
+  reset_fd_slot(&threads[current_thread].fds[fd]);
+  return 0;
+}
+
+fd_slot_t *sched_fd_get(int fd) {
+  if (current_thread == -1 || fd < 0 || fd >= THREAD_MAX_FDS)
+    return 0;
+
+  if (threads[current_thread].fds[fd].kind == FD_KIND_UNUSED)
+    return 0;
+
+  return &threads[current_thread].fds[fd];
+}
+
 void sched_set_priority(int tid, thread_priority_t priority) {
   if (tid < 0 || tid >= thread_capacity)
     return;
@@ -290,6 +397,8 @@ void sched_exit(void) {
 
   threads[current_thread].state = THREAD_ZOMBIE;
   zombie_slot = current_thread;
+
+  sched_wakeup((const void *)(unsigned long long)current_thread);
 
   int next = find_next_runnable(current_thread);
   if (next == current_thread) {
@@ -314,5 +423,6 @@ int sched_is_alive(int tid) {
     return 0;
 
   return threads[tid].state == THREAD_READY ||
-         threads[tid].state == THREAD_RUNNING;
+         threads[tid].state == THREAD_RUNNING ||
+         threads[tid].state == THREAD_BLOCKED;
 }

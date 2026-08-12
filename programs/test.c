@@ -18,9 +18,9 @@ static u64 strlen(const char *str) {
   return len;
 }
 
-static void print(const char *str) { sys_write(str, strlen(str)); }
+static void print(const char *str) { sys_write(STDOUT, str, strlen(str)); }
 
-static void print_char(char c) { sys_write(&c, 1); }
+static void print_char(char c) { sys_write(STDOUT, &c, 1); }
 
 static void print_u64(u64 value) {
   char buffer[32];
@@ -53,7 +53,7 @@ static void print_hex(u64 value) {
     buffer[2 + i] = hex[(value >> shift) & 0xf];
   }
 
-  sys_write(buffer, sizeof(buffer));
+  sys_write(STDOUT, buffer, sizeof(buffer));
 }
 
 /*
