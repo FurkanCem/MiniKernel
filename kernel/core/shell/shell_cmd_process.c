@@ -2,6 +2,7 @@
 #include "kernel/fs.h"
 #include "kernel/heap.h"
 #include "kernel/process.h"
+#include "kernel/power.h"
 #include "kernel/thread.h"
 #include "kernel/video.h"
 
@@ -30,7 +31,7 @@ void cmd_elftest(void) {
     return;
   }
 
-  sched_wait(tid);
+  process_wait(tid, 0);
 
   print_str("\nelf process exited back through SYS_EXIT");
 }
@@ -83,8 +84,10 @@ void cmd_run(const char *name) {
     return;
   }
 
-  sched_wait(tid);
+  process_wait(tid, 0);
 
   kfree(buf);
   print_str("\nprocess exited back through SYS_EXIT");
 }
+
+void cmd_poweroff(void) { poweroff(); }

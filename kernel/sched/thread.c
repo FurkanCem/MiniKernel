@@ -3,6 +3,7 @@
 #include "kernel/heap.h"
 #include "kernel/io.h"
 #include "kernel/pmm.h"
+#include "kernel/process.h"
 #include "kernel/vmm.h"
 #include "kernel/vmm_stack.h"
 
@@ -33,13 +34,13 @@ typedef struct {
   int ticks_remaining;
   vmm_address_space_t address_space;
   const void *wait_channel;
+  void *context;
   fd_slot_t fds[THREAD_MAX_FDS];
 } thread_t;
 
 static thread_t *threads = 0;
 static int thread_capacity = 0;
 static int current_thread = -1;
-static int zombie_slot = -1;
 
 extern void switch_context(unsigned long long *old_rsp,
                            unsigned long long *new_rsp);
@@ -59,6 +60,7 @@ static void init_thread_slot(thread_t *t) {
   t->ticks_remaining = quantum_ticks[THREAD_PRIO_NORMAL];
   t->address_space = 0;
   t->wait_channel = 0;
+  t->context = 0;
   for (int i = 0; i < THREAD_MAX_FDS; i++) {
     reset_fd_slot(&t->fds[i]);
   }
@@ -73,6 +75,7 @@ static void copy_thread_slot(thread_t *dst, const thread_t *src) {
   dst->ticks_remaining = src->ticks_remaining;
   dst->address_space = src->address_space;
   dst->wait_channel = src->wait_channel;
+  dst->context = src->context;
   for (int i = 0; i < THREAD_MAX_FDS; i++) {
     dst->fds[i].kind = src->fds[i].kind;
     dst->fds[i].handle = src->fds[i].handle;
@@ -108,8 +111,10 @@ static int grow_thread_table(void) {
   return 0;
 }
 
-static void reap_zombie(void) {
-  if (zombie_slot == -1)
+static void reap_zombie(int target_tid) {
+  int zombie_slot = target_tid;
+  if (zombie_slot < 0 || zombie_slot >= thread_capacity ||
+      zombie_slot == current_thread || threads[zombie_slot].state != THREAD_ZOMBIE)
     return;
 
   if (threads[zombie_slot].guard_page != 0) {
@@ -123,6 +128,7 @@ static void reap_zombie(void) {
 
   if (threads[zombie_slot].address_space != vmm_kernel_address_space()) {
     vmm_unregister_growable_stack(threads[zombie_slot].address_space);
+    process_reap_thread(zombie_slot, threads[zombie_slot].address_space);
   }
 
   threads[zombie_slot].state = THREAD_UNUSED;
@@ -131,10 +137,16 @@ static void reap_zombie(void) {
   threads[zombie_slot].rsp = 0;
   threads[zombie_slot].address_space = 0;
   threads[zombie_slot].wait_channel = 0;
+  threads[zombie_slot].context = 0;
   for (int i = 0; i < THREAD_MAX_FDS; i++) {
     reset_fd_slot(&threads[zombie_slot].fds[i]);
   }
-  zombie_slot = -1;
+}
+
+void sched_reap_thread(int tid) {
+  unsigned long long flags = irq_save();
+  reap_zombie(tid);
+  irq_restore(flags);
 }
 
 static int find_next_runnable(int from) {
@@ -185,12 +197,13 @@ void sched_init(void) {
   threads[0].stack_low = stack_low;
   threads[0].guard_page = guard_page;
   current_thread = 0;
-  zombie_slot = -1;
 
   activate(0);
 }
 
-int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
+static int sched_spawn_prio_with_context(thread_entry_fn entry,
+                                         thread_priority_t priority,
+                                         void *context) {
   if (priority < 0 || priority >= THREAD_PRIO_COUNT)
     priority = THREAD_PRIO_NORMAL;
 
@@ -240,12 +253,21 @@ int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
   threads[slot].priority = priority;
   threads[slot].ticks_remaining = quantum_ticks[priority];
   threads[slot].address_space = vmm_kernel_address_space();
+  threads[slot].context = context;
 
   return slot;
 }
 
+int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority) {
+  return sched_spawn_prio_with_context(entry, priority, 0);
+}
+
 int sched_spawn(thread_entry_fn entry) {
-  return sched_spawn_prio(entry, THREAD_PRIO_NORMAL);
+  return sched_spawn_prio_with_context(entry, THREAD_PRIO_NORMAL, 0);
+}
+
+int sched_spawn_with_context(thread_entry_fn entry, void *context) {
+  return sched_spawn_prio_with_context(entry, THREAD_PRIO_NORMAL, context);
 }
 
 void sched_set_address_space(int tid, vmm_address_space_t space) {
@@ -262,8 +284,6 @@ void sched_yield(void) {
     return;
 
   unsigned long long flags = irq_save();
-
-  reap_zombie();
 
   int next = find_next_runnable(current_thread);
   if (next == current_thread) {
@@ -297,6 +317,9 @@ void sched_tick(void) {
 void sched_sleep(const void *channel) {
   unsigned long long flags = irq_save();
 
+  /* A shell commonly blocks for keyboard input immediately after wait().
+   * Reap a completed child here too, otherwise no yield may occur and its
+   * address space and thread slot remain allocated indefinitely. */
   threads[current_thread].wait_channel = channel;
   threads[current_thread].state = THREAD_BLOCKED;
 
@@ -389,16 +412,19 @@ void sched_set_priority(int tid, thread_priority_t priority) {
 }
 
 void sched_exit(void) {
+  sched_exit_status(-1);
+}
+
+void sched_exit_status(int status) {
   if (current_thread == -1)
     return;
 
   unsigned long long flags = irq_save();
 
-  reap_zombie();
-
   threads[current_thread].state = THREAD_ZOMBIE;
-  zombie_slot = current_thread;
 
+  /* Publish process exit only after this thread is no longer runnable. */
+  process_mark_exited(current_thread, status);
   sched_wakeup((const void *)(unsigned long long)current_thread);
 
   int next = find_next_runnable(current_thread);
@@ -419,6 +445,18 @@ void sched_exit(void) {
 }
 
 int sched_current_tid(void) { return current_thread; }
+void *sched_current_context(void) {
+  if (current_thread < 0 || current_thread >= thread_capacity)
+    return 0;
+  return threads[current_thread].context;
+}
+
+void sched_set_current_context(void *context) {
+  if (current_thread < 0 || current_thread >= thread_capacity)
+    return;
+  threads[current_thread].context = context;
+}
+
 int sched_is_alive(int tid) {
   if (tid < 0 || tid >= thread_capacity)
     return 0;

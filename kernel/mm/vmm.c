@@ -294,6 +294,57 @@ vmm_address_space_t vmm_create_address_space(void) {
   return frame;
 }
 
+/*
+ * User programs are placed in PML4 slot 1 (see process.c).  That slot is
+ * created only in the process's PML4, while kernel mappings are inherited
+ * from kernel_pml4.  Free only private top-level branches so this cannot
+ * release the page tables shared with the kernel.
+ */
+void vmm_destroy_address_space(vmm_address_space_t space) {
+  if (space == 0 || space == vmm_kernel_address_space())
+    return;
+
+  unsigned long long *pml4 = space_pml4(space);
+  for (unsigned int l4i = 0; l4i < ENTRIES_PER_TABLE; l4i++) {
+    unsigned long long l4 = pml4[l4i];
+    if (!(l4 & PAGE_PRESENT) || l4 == kernel_pml4[l4i])
+      continue;
+
+    unsigned long long *pdpt = (unsigned long long *)(l4 & PAGE_ADDR_MASK);
+    for (unsigned int l3i = 0; l3i < ENTRIES_PER_TABLE; l3i++) {
+      unsigned long long l3 = pdpt[l3i];
+      if (!(l3 & PAGE_PRESENT))
+        continue;
+
+      unsigned long long *pd = (unsigned long long *)(l3 & PAGE_ADDR_MASK);
+      for (unsigned int l2i = 0; l2i < ENTRIES_PER_TABLE; l2i++) {
+        unsigned long long l2 = pd[l2i];
+        if (!(l2 & PAGE_PRESENT))
+          continue;
+
+        if (l2 & PAGE_SIZE_2MB) {
+          /* User mappings are 4 KiB pages; never free shared huge pages. */
+          continue;
+        }
+
+        unsigned long long *pt = (unsigned long long *)(l2 & PAGE_ADDR_MASK);
+        for (unsigned int l1i = 0; l1i < ENTRIES_PER_TABLE; l1i++) {
+          unsigned long long pte = pt[l1i];
+          if ((pte & (PAGE_PRESENT | PAGE_USER)) ==
+              (PAGE_PRESENT | PAGE_USER)) {
+            pmm_free_frame(pte & PAGE_ADDR_MASK);
+          }
+        }
+        pmm_free_frame((unsigned long long)pt);
+      }
+      pmm_free_frame((unsigned long long)pd);
+    }
+    pmm_free_frame((unsigned long long)pdpt);
+  }
+
+  pmm_free_frame(space);
+}
+
 void vmm_init(void) {
   unsigned long long cr3;
   __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));

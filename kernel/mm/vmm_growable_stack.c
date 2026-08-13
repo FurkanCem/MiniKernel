@@ -1,6 +1,6 @@
-#include "kernel/vmm_stack.h"
 #include "kernel/heap.h"
 #include "kernel/pmm.h"
+#include "kernel/vmm_stack.h"
 
 #define PAGE_4KB_SIZE 4096ULL
 
@@ -14,8 +14,8 @@ typedef struct stack_region {
 static stack_region_t *stack_regions = 0;
 
 void vmm_register_growable_stack(vmm_address_space_t space,
-                                  unsigned long long stack_top,
-                                  unsigned long long max_size) {
+                                 unsigned long long stack_top,
+                                 unsigned long long max_size) {
   stack_region_t *region = (stack_region_t *)kmalloc(sizeof(stack_region_t));
   if (region == 0)
     return;
@@ -43,7 +43,7 @@ void vmm_unregister_growable_stack(vmm_address_space_t space) {
 }
 
 static stack_region_t *find_region(vmm_address_space_t space,
-                                    unsigned long long page) {
+                                   unsigned long long page) {
   for (stack_region_t *region = stack_regions; region != 0;
        region = region->next) {
     if (region->space != space)
@@ -70,7 +70,7 @@ int vmm_handle_page_fault(unsigned long long fault_addr, registers_t *regs) {
   if (vmm_is_mapped_in(space, page))
     return 0;
 
-  unsigned long long frame = pmm_alloc_frame();
+  unsigned long long frame = pmm_alloc_zeroed_frame();
   if (frame == 0)
     return 0;
 

@@ -51,10 +51,23 @@ static unsigned long read_line(char *buf, unsigned long max) {
   return len;
 }
 
+static void cmd_ls(void) {
+  char name[32];
+
+  for (unsigned long index = 0;; index++) {
+    if (sys_list(index, name, sizeof(name)) < 0)
+      break;
+
+    print(name);
+    print("\n");
+  }
+}
+
 __attribute__((section(".text._start"))) void _start(void) {
   char line[LINE_MAX];
 
   print("MiniKernel userspace shell\n");
+  print("type a program name to run it, 'ls' to list files, 'exit' to quit\n");
 
   for (;;) {
     print("sh> ");
@@ -66,6 +79,11 @@ __attribute__((section(".text._start"))) void _start(void) {
 
     if (str_eq(line, "exit")) {
       sys_exit(0);
+    }
+
+    if (str_eq(line, "ls")) {
+      cmd_ls();
+      continue;
     }
 
     long pid = sys_spawn(line, len);

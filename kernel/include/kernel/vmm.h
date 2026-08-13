@@ -28,6 +28,7 @@ unsigned long long vmm_debug_walk_flags_in(vmm_address_space_t space,
                                             unsigned long long virt_addr);
 
 vmm_address_space_t vmm_create_address_space(void);
+void vmm_destroy_address_space(vmm_address_space_t space);
 void vmm_switch_address_space(vmm_address_space_t space);
 vmm_address_space_t vmm_current_address_space(void);
 vmm_address_space_t vmm_kernel_address_space(void);

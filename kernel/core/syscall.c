@@ -1,7 +1,10 @@
 #include "kernel/syscall.h"
 #include "kernel/fd.h"
+#include "kernel/fs.h"
 #include "kernel/klog.h"
+#include "kernel/memfs.h"
 #include "kernel/process.h"
+#include "kernel/pmm.h"
 #include "kernel/thread.h"
 #include "kernel/vmm.h"
 
@@ -14,13 +17,18 @@ static int user_range_ok(unsigned long long vaddr, unsigned long long len) {
   if (len == 0)
     return 1;
 
+  if (len - 1 > ~0ULL - vaddr)
+    return 0;
+
   vmm_address_space_t space = vmm_current_address_space();
   unsigned long long start = vaddr & ~0xFFFULL;
-  unsigned long long end = (vaddr + len + 0xFFF) & ~0xFFFULL;
+  unsigned long long end = (vaddr + len - 1) & ~0xFFFULL;
 
-  for (unsigned long long page = start; page < end; page += 0x1000) {
+  for (unsigned long long page = start;; page += 0x1000) {
     if (!vmm_is_user_accessible_in(space, page))
       return 0;
+    if (page == end)
+      break;
   }
   return 1;
 }
@@ -89,6 +97,71 @@ void syscall_handler(registers_t *regs) {
     break;
   }
 
+  case SYS_LIST: {
+    unsigned long long index = regs->rdi;
+    unsigned long long buf = regs->rsi;
+    unsigned long long buf_len = regs->rdx;
+
+    if (buf_len == 0 || !user_range_ok(buf, buf_len)) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    unsigned int disk_count = fs_file_count();
+    const char *name = 0;
+
+    if (index < disk_count) {
+      const fs_dirent_t *e = fs_entry((unsigned int)index);
+      name = e ? e->name : 0;
+    } else {
+      unsigned long long memfs_index = index - disk_count;
+      int handle = memfs_first();
+      unsigned long long i = 0;
+      while (handle >= 0 && i < memfs_index) {
+        handle = memfs_next(handle);
+        i++;
+      }
+      if (handle >= 0)
+        name = memfs_name(handle);
+    }
+
+    if (name == 0) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    char *dst = (char *)buf;
+    unsigned long long i = 0;
+    for (; i < buf_len - 1 && name[i] != '\0'; i++) {
+      dst[i] = name[i];
+    }
+    dst[i] = '\0';
+
+    regs->rax = 0;
+    break;
+  }
+
+  case SYS_WHOAMI:
+    /* System calls are entered from ring 3, so this identifies the caller. */
+    regs->rax = (unsigned long long)sched_current_tid();
+    break;
+
+  case SYS_MEMINFO: {
+    /* syscall2 uses rsi and rdx for its two payload arguments. */
+    unsigned long long total_ptr = regs->rsi;
+    unsigned long long free_ptr = regs->rdx;
+    if (!user_range_ok(total_ptr, sizeof(unsigned long long)) ||
+        !user_range_ok(free_ptr, sizeof(unsigned long long))) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    *(unsigned long long *)total_ptr = pmm_total_frames();
+    *(unsigned long long *)free_ptr = pmm_free_frames();
+    regs->rax = 0;
+    break;
+  }
+
   case SYS_SPAWN: {
     unsigned long long buf = regs->rsi;
     unsigned long long len = regs->rdx;
@@ -130,15 +203,17 @@ void syscall_handler(registers_t *regs) {
   }
 
   case SYS_WAIT: {
-    int tid = (int)regs->rdi;
-    sched_wait(tid);
-    regs->rax = 0;
+    int status;
+    if (process_wait((int)regs->rdi, &status) != 0)
+      regs->rax = (unsigned long long)-1;
+    else
+      regs->rax = (unsigned long long)status;
     break;
   }
 
   case SYS_EXIT:
     klog_write("syscall: ring-3 thread exiting via SYS_EXIT\n");
-    sched_exit();
+    process_exit((int)regs->rdi);
     break;
 
   default:

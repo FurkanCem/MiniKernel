@@ -8,7 +8,7 @@ BUILD_DIR="$PROGRAMS_DIR/build"
 
 mkdir -p "$BUILD_DIR"
 
-CFLAGS=(-m64 -ffreestanding -fno-pic -fno-pie -fno-stack-protector -Wall -Wextra -c)
+CFLAGS=(-m64 -ffreestanding -fpie -fno-stack-protector -Wall -Wextra -c)
 LDFLAGS=(-T "$PROGRAMS_DIR/linker.ld" -nostdlib -static)
 
 built_any=0

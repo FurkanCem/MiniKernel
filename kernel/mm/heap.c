@@ -19,6 +19,9 @@ static unsigned long long align_up(unsigned long long value,
 }
 
 static heap_block_t *grow_heap(unsigned long long required_size) {
+  if (required_size > ~0ULL - HEAP_HEADER_SIZE)
+    return 0;
+
   unsigned long long total_size = HEAP_HEADER_SIZE + required_size;
 
   unsigned long long frame_count =
@@ -45,6 +48,9 @@ void heap_init(void) { heap_head = 0; }
 
 void *kmalloc(unsigned long long size) {
   if (size == 0)
+    return 0;
+
+  if (size > ~0ULL - (HEAP_ALIGN - 1))
     return 0;
 
   size = align_up(size, HEAP_ALIGN);
@@ -97,10 +103,35 @@ void kfree(void *ptr) {
 
   unsigned long long flags = irq_save();
 
-  heap_block_t *block =
-      (heap_block_t *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
+  heap_block_t *block = 0;
+  for (heap_block_t *candidate = heap_head; candidate != 0;
+       candidate = candidate->next) {
+    if ((unsigned char *)candidate + HEAP_HEADER_SIZE == ptr) {
+      block = candidate;
+      break;
+    }
+  }
+
+  /* Ignore invalid or duplicate frees instead of corrupting heap metadata. */
+  if (block == 0 || block->free) {
+    irq_restore(flags);
+    return;
+  }
 
   block->free = 1;
+
+  for (heap_block_t *current = heap_head;
+       current != 0 && current->next != 0;) {
+    heap_block_t *next = current->next;
+    unsigned char *current_end =
+        (unsigned char *)current + HEAP_HEADER_SIZE + current->size;
+    if (current->free && next->free && current_end == (unsigned char *)next) {
+      current->size += HEAP_HEADER_SIZE + next->size;
+      current->next = next->next;
+      continue;
+    }
+    current = current->next;
+  }
 
   irq_restore(flags);
 }

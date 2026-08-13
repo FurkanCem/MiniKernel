@@ -1,6 +1,7 @@
 #include "kernel/panic.h"
 #include "kernel/klog.h"
 #include "kernel/thread.h"
+#include "kernel/process.h"
 #include "kernel/video.h"
 #include "kernel/vmm_stack.h"
 
@@ -44,7 +45,7 @@ static void kill_faulting_process(const char *reason, registers_t *regs) {
 
   log_common_regs(regs);
 
-  sched_exit();
+  process_exit(-1);
 }
 
 void kpanic(const char *reason, registers_t *regs) {

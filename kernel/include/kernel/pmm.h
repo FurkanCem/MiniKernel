@@ -6,6 +6,7 @@
 void pmm_init(void);
 
 unsigned long long pmm_alloc_frame(void);
+unsigned long long pmm_alloc_zeroed_frame(void);
 
 unsigned long long pmm_alloc_contiguous(unsigned long long count);
 

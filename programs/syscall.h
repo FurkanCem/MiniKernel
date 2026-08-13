@@ -9,6 +9,9 @@
 #define SYS_WAIT 6
 #define SYS_OPEN 7
 #define SYS_CLOSE 8
+#define SYS_LIST 9
+#define SYS_WHOAMI 10
+#define SYS_MEMINFO 11
 
 #define STDIN 0
 #define STDOUT 1
@@ -75,6 +78,19 @@ static inline long sys_open(const char *name, unsigned long flags) {
 
 static inline long sys_close(int fd) {
   return syscall1(SYS_CLOSE, (unsigned long)fd);
+}
+
+static inline long sys_list(unsigned long index, char *buf,
+                             unsigned long buf_len) {
+  return syscall3(SYS_LIST, index, (unsigned long)buf, buf_len);
+}
+
+static inline long sys_whoami(void) { return syscall0(SYS_WHOAMI); }
+
+static inline long sys_meminfo(unsigned long *total_frames,
+                               unsigned long *free_frames) {
+  return syscall2(SYS_MEMINFO, (unsigned long)total_frames,
+                  (unsigned long)free_frames);
 }
 
 static inline long sys_spawn(const char *cmdline, unsigned long len) {

@@ -94,6 +94,11 @@ void pmm_init(void) {
 
   reserve_range(0x0, 0x8200);
 
+  /* The bootloader enters the kernel with SP=0x90000 and the stack grows
+   * downward. Reserve a guard band on both sides because kernel_main and
+   * interrupt frames use pages below the initial SP. */
+  reserve_range(0x80000, 0xA0000);
+
   /* The kernel image itself - code, rodata, data, bss. */
   reserve_range(0x8200, (unsigned long long)_kernel_end);
 
@@ -115,6 +120,18 @@ unsigned long long pmm_alloc_frame(void) {
 
   irq_restore(flags);
   return 0;
+}
+
+unsigned long long pmm_alloc_zeroed_frame(void) {
+  unsigned long long frame = pmm_alloc_frame();
+  if (frame == 0)
+    return 0;
+
+  unsigned char *bytes = (unsigned char *)frame;
+  for (unsigned long long i = 0; i < PMM_FRAME_SIZE; i++)
+    bytes[i] = 0;
+
+  return frame;
 }
 
 unsigned long long pmm_alloc_contiguous(unsigned long long count) {

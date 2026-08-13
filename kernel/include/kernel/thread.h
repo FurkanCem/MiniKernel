@@ -26,6 +26,7 @@ typedef struct {
 
 void sched_init(void);
 int sched_spawn(thread_entry_fn entry);
+int sched_spawn_with_context(thread_entry_fn entry, void *context);
 int sched_spawn_prio(thread_entry_fn entry, thread_priority_t priority);
 void sched_set_priority(int tid, thread_priority_t priority);
 void sched_set_address_space(int tid, vmm_address_space_t space);
@@ -42,6 +43,10 @@ int sched_fd_close(int fd);
 fd_slot_t *sched_fd_get(int fd);
 
 void sched_exit(void);
+void sched_exit_status(int status);
+void sched_reap_thread(int tid);
 int sched_is_alive(int);
 int sched_current_tid(void);
+void *sched_current_context(void);
+void sched_set_current_context(void *context);
 #endif
