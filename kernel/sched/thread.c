@@ -303,13 +303,14 @@ void sched_sleep(const void *channel) {
   int next = find_next_runnable(current_thread);
 
   if (next == current_thread) {
-    irq_restore(flags);
+    __asm__ volatile("sti");
 
     while (threads[current_thread].state == THREAD_BLOCKED) {
       __asm__ volatile("hlt");
     }
 
     threads[current_thread].state = THREAD_RUNNING;
+    irq_restore(flags);
     return;
   }
 

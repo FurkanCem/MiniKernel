@@ -14,7 +14,7 @@ enter_usermode:
 
     push qword USER_DATA_SEL   ; SS
     push rsi                   ; RSP
-    push qword 0x002
+    push qword 0x202
     push qword USER_CODE_SEL   ; CS
     push rdi                   ; RIP
 
