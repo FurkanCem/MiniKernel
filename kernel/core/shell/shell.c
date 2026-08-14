@@ -18,7 +18,7 @@ static unsigned int str_len(const char *s) {
 static void cmd_help(void) {
   print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
             "vmmtest, heaptest, threadtest, largethreadtest, usermodetest, "
-            "elftest, ls, run <name>, poweroff");
+            "elftest, ufstest, ls, run <name>, poweroff");
 }
 
 static void cmd_clear(void) {
@@ -54,6 +54,7 @@ static const exact_command_t exact_commands[] = {
     {"largethreadtest", cmd_largethreadtest, 0},
     {"usermodetest", cmd_usermodetest, 0},
     {"elftest", cmd_elftest, 0},
+    {"ufstest", cmd_ufstest, 0},
     {"ls", cmd_ls, 0},
     {"clear", cmd_clear, 1},
     {"poweroff", cmd_poweroff, 1},

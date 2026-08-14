@@ -12,11 +12,14 @@
 #define SYS_LIST 9
 #define SYS_WHOAMI 10
 #define SYS_MEMINFO 11
+#define SYS_REMOVE 12
 
 #define STDIN 0
 #define STDOUT 1
 
 #define O_CREATE 1UL
+#define O_PERSIST 2UL
+#define O_TRUNC 4UL
 
 static inline long syscall0(long number) {
   long ret;
@@ -52,8 +55,8 @@ static inline long syscall2(long number, unsigned long arg1,
   return ret;
 }
 
-static inline long syscall3(long number, unsigned long arg1,
-                            unsigned long arg2, unsigned long arg3) {
+static inline long syscall3(long number, unsigned long arg1, unsigned long arg2,
+                            unsigned long arg3) {
   long ret;
 
   __asm__ volatile("int $0x80"
@@ -80,8 +83,12 @@ static inline long sys_close(int fd) {
   return syscall1(SYS_CLOSE, (unsigned long)fd);
 }
 
+static inline long sys_remove(const char *name) {
+  return syscall1(SYS_REMOVE, (unsigned long)name);
+}
+
 static inline long sys_list(unsigned long index, char *buf,
-                             unsigned long buf_len) {
+                            unsigned long buf_len) {
   return syscall3(SYS_LIST, index, (unsigned long)buf, buf_len);
 }
 
@@ -97,7 +104,9 @@ static inline long sys_spawn(const char *cmdline, unsigned long len) {
   return syscall2(SYS_SPAWN, (unsigned long)cmdline, len);
 }
 
-static inline long sys_wait(long pid) { return syscall1(SYS_WAIT, (unsigned long)pid); }
+static inline long sys_wait(long pid) {
+  return syscall1(SYS_WAIT, (unsigned long)pid);
+}
 
 static inline void sys_exit(int status) {
   syscall1(SYS_EXIT, (unsigned long)status);

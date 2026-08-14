@@ -14,5 +14,6 @@ unsigned int memfs_size(int handle);
 int memfs_first(void);
 int memfs_next(int handle);
 const char *memfs_name(int handle);
+unsigned int memfs_file_count(void);
 
 #endif

@@ -17,6 +17,7 @@ void cmd_largethreadtest(void);
 
 void cmd_usermodetest(void);
 void cmd_elftest(void);
+void cmd_ufstest(void);
 void cmd_ls(void);
 void cmd_run(const char *name);
 void cmd_poweroff(void);

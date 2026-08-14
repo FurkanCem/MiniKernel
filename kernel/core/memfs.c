@@ -227,3 +227,12 @@ const char *memfs_name(int handle) {
 
   return entries[handle].name;
 }
+
+unsigned int memfs_file_count(void) {
+  unsigned int count = 0;
+  for (int i = 0; i < entry_capacity; i++) {
+    if (entries[i].in_use)
+      count++;
+  }
+  return count;
+}

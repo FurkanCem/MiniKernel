@@ -10,6 +10,7 @@
 #include "kernel/shell.h"
 #include "kernel/thread.h"
 #include "kernel/timer.h"
+#include "kernel/ufs.h"
 #include "kernel/video.h"
 #include "kernel/vmm.h"
 
@@ -61,6 +62,7 @@ void kernel_main(void) {
   klog_write("MiniKernel: PIC remapped, timer + keyboard IRQs live\n");
 
   fs_init();
+  ufs_init();
 
   const char *welcome_msg = "Working kernel";
   putstr(welcome_msg);

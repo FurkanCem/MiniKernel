@@ -6,6 +6,11 @@ FS_BASE_LBA = 2048
 SECTOR = 512
 MAX_ENTRIES = 16
 
+UFS_BASE_LBA = 8192
+UFS_DIR_SECTORS = 4
+UFS_DATA_LBA = UFS_BASE_LBA + 1 + UFS_DIR_SECTORS
+UFS_DATA_RESERVED_SECTORS = 8192
+
 def build(boot_path, kernel_path, files, out_path):
     with open(boot_path, 'rb') as f:
         boot = f.read()
@@ -65,6 +70,39 @@ def build(boot_path, kernel_path, files, out_path):
     print('wrote', out_path, len(img), 'bytes,', len(img) // SECTOR, 'sectors')
 
 
+def format_ufs_region(out_path):
+    """Appends a freshly-formatted, empty UFS (persistent user filesystem)
+    region after the existing image, so the kernel's ufs_init() finds a
+    valid, correctly-sized filesystem on first boot instead of reading
+    past the end of the image file."""
+    current_len = os.path.getsize(out_path)
+    pad_to = UFS_BASE_LBA * SECTOR
+    if current_len > pad_to:
+        raise ValueError(
+            'system region (%d bytes) overruns UFS_BASE_LBA=%d; '
+            'raise UFS_BASE_LBA in both mkdisk.py and kernel/core/ufs.c'
+            % (current_len, UFS_BASE_LBA))
+
+    with open(out_path, 'ab') as f:
+        if current_len < pad_to:
+            f.write(bytes(pad_to - current_len))
+
+        superblock = bytearray(SECTOR)
+        superblock[0:4] = b'UFS1'
+        superblock[4:8] = struct.pack('<I', 0)          # file_count
+        superblock[8:12] = struct.pack('<I', UFS_DATA_LBA)  # next_free_lba
+        f.write(superblock)
+
+        f.write(bytes(UFS_DIR_SECTORS * SECTOR))  # empty directory
+
+        f.write(bytes(UFS_DATA_RESERVED_SECTORS * SECTOR))  # reserved data
+
+    total_sectors = (UFS_BASE_LBA + 1 + UFS_DIR_SECTORS +
+                      UFS_DATA_RESERVED_SECTORS)
+    print('formatted UFS region:', total_sectors, 'sectors total,',
+          UFS_DATA_RESERVED_SECTORS, 'sectors of user data space')
+
+
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print('usage: mkdisk.py out.img [name:path ...]')
@@ -78,3 +116,4 @@ if __name__ == '__main__':
         files.append((name, path))
 
     build('bootloader/boot', 'kernel/kernel', files, out_path)
+    format_ufs_region(out_path)

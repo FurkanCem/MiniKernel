@@ -6,6 +6,7 @@
 #include "kernel/process.h"
 #include "kernel/pmm.h"
 #include "kernel/thread.h"
+#include "kernel/ufs.h"
 #include "kernel/vmm.h"
 
 #define SYS_IO_MAX_LEN 4096ULL
@@ -97,6 +98,26 @@ void syscall_handler(registers_t *regs) {
     break;
   }
 
+  case SYS_REMOVE: {
+    unsigned long long name_ptr = regs->rdi;
+
+    if (!user_range_ok(name_ptr, SYS_OPEN_NAME_MAX)) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    char name[SYS_OPEN_NAME_MAX];
+    const char *src = (const char *)name_ptr;
+    unsigned long long i = 0;
+    for (; i < SYS_OPEN_NAME_MAX - 1 && src[i] != '\0'; i++) {
+      name[i] = src[i];
+    }
+    name[i] = '\0';
+
+    regs->rax = (unsigned long long)ufs_delete(name);
+    break;
+  }
+
   case SYS_LIST: {
     unsigned long long index = regs->rdi;
     unsigned long long buf = regs->rsi;
@@ -108,12 +129,13 @@ void syscall_handler(registers_t *regs) {
     }
 
     unsigned int disk_count = fs_file_count();
+    unsigned int mem_count = memfs_file_count();
     const char *name = 0;
 
     if (index < disk_count) {
       const fs_dirent_t *e = fs_entry((unsigned int)index);
       name = e ? e->name : 0;
-    } else {
+    } else if (index < (unsigned long long)disk_count + mem_count) {
       unsigned long long memfs_index = index - disk_count;
       int handle = memfs_first();
       unsigned long long i = 0;
@@ -123,6 +145,10 @@ void syscall_handler(registers_t *regs) {
       }
       if (handle >= 0)
         name = memfs_name(handle);
+    } else {
+      unsigned long long ufs_index = index - disk_count - mem_count;
+      const ufs_dirent_t *e = ufs_entry((unsigned int)ufs_index);
+      name = e ? e->name : 0;
     }
 
     if (name == 0) {

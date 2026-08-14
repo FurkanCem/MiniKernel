@@ -15,6 +15,7 @@ typedef enum {
 #define FD_KIND_UNUSED 0
 #define FD_KIND_CONSOLE 1
 #define FD_KIND_MEMFS 2
+#define FD_KIND_UFS 3
 
 #define THREAD_MAX_FDS 8
 

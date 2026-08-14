@@ -2,6 +2,8 @@
 #define KERNEL_FD_H
 
 #define FD_CREATE 1ULL
+#define FD_PERSIST 2ULL
+#define FD_TRUNC 4ULL
 
 int fd_open(const char *name, unsigned long long flags);
 int fd_close(int fd);

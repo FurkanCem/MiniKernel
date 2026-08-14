@@ -14,6 +14,7 @@
 #define SYS_LIST 9
 #define SYS_WHOAMI 10
 #define SYS_MEMINFO 11
+#define SYS_REMOVE 12
 
 void syscall_handler(registers_t *regs);
 
