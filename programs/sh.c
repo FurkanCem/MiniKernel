@@ -93,6 +93,9 @@ static void cmd_ls(void) {
   }
 }
 
+/* Persists a single line of text under `name` on the disk-backed
+ * filesystem, replacing any previous contents. This is a stopgap for
+ * testing persistence until a real multi-line text editor exists. */
 static void cmd_write(const char *name) {
   if (name[0] == '\0') {
     print("usage: write <name>\n");

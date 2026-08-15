@@ -6,6 +6,10 @@ FS_BASE_LBA = 2048
 SECTOR = 512
 MAX_ENTRIES = 16
 
+# Must mirror the constants in kernel/core/ufs.c exactly - this is the
+# persistent, writable region a running kernel can create/save files
+# into (as opposed to the read-only MFS1 region built above, which only
+# ever holds binaries baked in at build time).
 UFS_BASE_LBA = 8192
 UFS_DIR_SECTORS = 4
 UFS_DATA_LBA = UFS_BASE_LBA + 1 + UFS_DIR_SECTORS

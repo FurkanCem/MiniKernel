@@ -114,8 +114,7 @@ static int grow_thread_table(void) {
 static void reap_zombie(int target_tid) {
   int zombie_slot = target_tid;
   if (zombie_slot < 0 || zombie_slot >= thread_capacity ||
-      zombie_slot == current_thread ||
-      threads[zombie_slot].state != THREAD_ZOMBIE)
+      zombie_slot == current_thread || threads[zombie_slot].state != THREAD_ZOMBIE)
     return;
 
   if (threads[zombie_slot].guard_page != 0) {
@@ -318,6 +317,9 @@ void sched_tick(void) {
 void sched_sleep(const void *channel) {
   unsigned long long flags = irq_save();
 
+  /* A shell commonly blocks for keyboard input immediately after wait().
+   * Reap a completed child here too, otherwise no yield may occur and its
+   * address space and thread slot remain allocated indefinitely. */
   threads[current_thread].wait_channel = channel;
   threads[current_thread].state = THREAD_BLOCKED;
 
@@ -350,8 +352,7 @@ void sched_wakeup(const void *channel) {
   unsigned long long flags = irq_save();
 
   for (int i = 0; i < thread_capacity; i++) {
-    if (threads[i].state == THREAD_BLOCKED &&
-        threads[i].wait_channel == channel) {
+    if (threads[i].state == THREAD_BLOCKED && threads[i].wait_channel == channel) {
       threads[i].state = THREAD_READY;
       threads[i].wait_channel = 0;
     }
@@ -370,6 +371,12 @@ int sched_fd_open(int kind, int handle) {
   if (current_thread == -1)
     return -1;
 
+  /* fd 0 and 1 are reserved for stdin/stdout, which fd_read()/fd_write()
+   * special-case by that literal number rather than a table entry here.
+   * Handing either of those numbers out for a real file would make the
+   * very next sys_read()/sys_write() on it silently hit the console
+   * path instead (e.g. a read redirected to the keyboard, blocking
+   * forever with no error) - so real files always start at 2. */
   thread_t *t = &threads[current_thread];
   for (int i = 2; i < THREAD_MAX_FDS; i++) {
     if (t->fds[i].kind == FD_KIND_UNUSED) {
@@ -410,7 +417,9 @@ void sched_set_priority(int tid, thread_priority_t priority) {
   threads[tid].priority = priority;
 }
 
-void sched_exit(void) { sched_exit_status(-1); }
+void sched_exit(void) {
+  sched_exit_status(-1);
+}
 
 void sched_exit_status(int status) {
   if (current_thread == -1)

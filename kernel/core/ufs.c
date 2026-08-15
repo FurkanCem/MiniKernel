@@ -273,6 +273,9 @@ static unsigned int sectors_for_bytes(unsigned int bytes) {
   return (bytes + SECTOR_SIZE - 1) / SECTOR_SIZE;
 }
 
+/* Grows a file's on-disk capacity to hold `needed_bytes`, allocating a
+ * fresh region from the bump allocator and copying existing data over
+ * if the file was already holding some. No-op if it already fits. */
 static int ensure_capacity(int handle, unsigned int needed_bytes) {
   unsigned char *e = entry_at((unsigned int)handle);
   unsigned int cur_capacity_sectors = read_u32(e + 28);

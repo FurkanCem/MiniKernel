@@ -7,9 +7,11 @@
 #include "kernel/pmm.h"
 #include "kernel/thread.h"
 #include "kernel/ufs.h"
+#include "kernel/video.h"
 #include "kernel/vmm.h"
 
 #define SYS_IO_MAX_LEN 4096ULL
+#define SYS_DRAW_ROW_MAX_LEN 256ULL
 #define SYS_SPAWN_CMDLINE_MAX 128ULL
 #define SYS_SPAWN_NAME_MAX 20ULL
 #define SYS_OPEN_NAME_MAX 32ULL
@@ -115,6 +117,56 @@ void syscall_handler(registers_t *regs) {
     name[i] = '\0';
 
     regs->rax = (unsigned long long)ufs_delete(name);
+    break;
+  }
+
+  case SYS_CLEAR: {
+    clearwin();
+    regs->rax = 0;
+    break;
+  }
+
+  case SYS_SET_CURSOR: {
+    unsigned long long row = regs->rsi;
+    unsigned long long col = regs->rdx;
+    video_set_cursor((unsigned int)row, (unsigned int)col);
+    regs->rax = 0;
+    break;
+  }
+
+  case SYS_DRAW_ROW: {
+    unsigned long long row = regs->rdi;
+    unsigned long long buf = regs->rsi;
+    unsigned long long len = regs->rdx;
+
+    if (len > SYS_DRAW_ROW_MAX_LEN || !user_range_ok(buf, len)) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    char line[SYS_DRAW_ROW_MAX_LEN];
+    const char *src = (const char *)buf;
+    for (unsigned long long i = 0; i < len; i++)
+      line[i] = src[i];
+
+    video_draw_row((unsigned int)row, line, (unsigned int)len);
+    regs->rax = 0;
+    break;
+  }
+
+  case SYS_SCREEN_INFO: {
+    unsigned long long cols_ptr = regs->rsi;
+    unsigned long long rows_ptr = regs->rdx;
+
+    if (!user_range_ok(cols_ptr, sizeof(unsigned long long)) ||
+        !user_range_ok(rows_ptr, sizeof(unsigned long long))) {
+      regs->rax = (unsigned long long)-1;
+      break;
+    }
+
+    *(unsigned long long *)cols_ptr = video_cols();
+    *(unsigned long long *)rows_ptr = video_rows();
+    regs->rax = 0;
     break;
   }
 

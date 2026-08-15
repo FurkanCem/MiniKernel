@@ -15,6 +15,10 @@
 #define SYS_WHOAMI 10
 #define SYS_MEMINFO 11
 #define SYS_REMOVE 12
+#define SYS_CLEAR 13
+#define SYS_SET_CURSOR 14
+#define SYS_DRAW_ROW 15
+#define SYS_SCREEN_INFO 16
 
 void syscall_handler(registers_t *regs);
 

@@ -97,6 +97,35 @@ void video_reset_cursor(void) {
   irq_restore(flags);
 }
 
+void video_set_cursor(unsigned int row, unsigned int col) {
+  unsigned long long flags = irq_save();
+  if (row < VGA_ROWS)
+    cursor_row = row;
+  if (col < VGA_COLS)
+    cursor_col = col;
+  update_hardware_cursor();
+  irq_restore(flags);
+}
+
+void video_draw_row(unsigned int row, const char *buf, unsigned int len) {
+  if (row >= VGA_ROWS)
+    return;
+
+  unsigned long long flags = irq_save();
+
+  unsigned int base = row * VGA_COLS;
+  for (unsigned int col = 0; col < VGA_COLS; col++) {
+    char c = (col < len) ? buf[col] : ' ';
+    vga_char temp = {.character = c, .style = STYLE_WB};
+    TEXT_AREA[base + col] = temp;
+  }
+
+  irq_restore(flags);
+}
+
+unsigned int video_cols(void) { return VGA_COLS; }
+unsigned int video_rows(void) { return VGA_ROWS; }
+
 void putchar_at_cursor(char c) {
   unsigned long long flags = irq_save();
 
