@@ -11,6 +11,7 @@
 #include "kernel/thread.h"
 #include "kernel/timer.h"
 #include "kernel/ufs.h"
+#include "kernel/users.h"
 #include "kernel/video.h"
 #include "kernel/vmm.h"
 
@@ -63,6 +64,7 @@ void kernel_main(void) {
 
   fs_init();
   ufs_init();
+  users_init();
 
   const char *welcome_msg = "Working kernel";
   putstr(welcome_msg);

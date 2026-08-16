@@ -24,12 +24,23 @@ static void print_unsigned(unsigned long value) {
 
 __attribute__((section(".text._start"))) void _start(void) {
   long tid = sys_whoami();
+  long uid = sys_getuid();
 
   print("thread id: ");
   if (tid < 0)
     print("unavailable");
   else
     print_unsigned((unsigned long)tid);
+  print("\nuid: ");
+  print_unsigned((unsigned long)uid);
+
+  char name[20];
+  if (sys_username((unsigned long)uid, name, sizeof(name)) == 0) {
+    print(" (");
+    print(name);
+    print(")");
+  }
+
   print("\nexecution mode: user (ring 3)\n");
 
   sys_exit(0);

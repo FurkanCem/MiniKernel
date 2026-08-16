@@ -1,4 +1,5 @@
 #include "kernel/thread.h"
+#include "kernel/fd.h"
 #include "kernel/gdt.h"
 #include "kernel/heap.h"
 #include "kernel/io.h"
@@ -36,6 +37,7 @@ typedef struct {
   const void *wait_channel;
   void *context;
   fd_slot_t fds[THREAD_MAX_FDS];
+  unsigned int uid;
 } thread_t;
 
 static thread_t *threads = 0;
@@ -114,8 +116,16 @@ static int grow_thread_table(void) {
 static void reap_zombie(int target_tid) {
   int zombie_slot = target_tid;
   if (zombie_slot < 0 || zombie_slot >= thread_capacity ||
-      zombie_slot == current_thread || threads[zombie_slot].state != THREAD_ZOMBIE)
+      zombie_slot == current_thread ||
+      threads[zombie_slot].state != THREAD_ZOMBIE)
     return;
+
+  /* Release any files/pipes this thread still had open (most programs
+   * don't bother closing fds before exiting - the kernel is expected
+   * to clean those up, same as any real OS). Must happen before the
+   * slot is handed to a new occupant, or the new thread would inherit
+   * stale fds pointing at whatever the old one left behind. */
+  fd_cleanup_thread(zombie_slot);
 
   if (threads[zombie_slot].guard_page != 0) {
     for (unsigned long long i = 0; i < THREAD_STACK_PAGES; i++) {
@@ -196,6 +206,13 @@ void sched_init(void) {
   threads[0].address_space = vmm_kernel_address_space();
   threads[0].stack_low = stack_low;
   threads[0].guard_page = guard_page;
+  threads[0].fds[0].kind = FD_KIND_CONSOLE;
+  threads[0].fds[0].handle = 0;
+  threads[0].fds[0].cursor = 0;
+  threads[0].fds[1].kind = FD_KIND_CONSOLE;
+  threads[0].fds[1].handle = 0;
+  threads[0].fds[1].cursor = 0;
+  threads[0].uid = 0; /* root - this is the kernel's own boot thread */
   current_thread = 0;
 
   activate(0);
@@ -254,6 +271,25 @@ static int sched_spawn_prio_with_context(thread_entry_fn entry,
   threads[slot].ticks_remaining = quantum_ticks[priority];
   threads[slot].address_space = vmm_kernel_address_space();
   threads[slot].context = context;
+
+  /* Every thread starts with stdin/stdout wired to the console by
+   * default; process_spawn_from_file_redirect() overwrites these right
+   * after creation (before this thread ever gets to run) when a caller
+   * asked for a pipe instead. */
+  threads[slot].fds[0].kind = FD_KIND_CONSOLE;
+  threads[slot].fds[0].handle = 0;
+  threads[slot].fds[0].cursor = 0;
+  threads[slot].fds[1].kind = FD_KIND_CONSOLE;
+  threads[slot].fds[1].handle = 0;
+  threads[slot].fds[1].cursor = 0;
+  for (int i = 2; i < THREAD_MAX_FDS; i++)
+    reset_fd_slot(&threads[slot].fds[i]);
+
+  /* Inherit the spawning thread's uid, same as a real fork() would -
+   * a program you run should run as you, not as whichever uid happens
+   * to default to zero. Falls back to 0 (root) if spawned with no
+   * current thread context (e.g. very early boot). */
+  threads[slot].uid = (current_thread >= 0) ? threads[current_thread].uid : 0;
 
   return slot;
 }
@@ -352,7 +388,8 @@ void sched_wakeup(const void *channel) {
   unsigned long long flags = irq_save();
 
   for (int i = 0; i < thread_capacity; i++) {
-    if (threads[i].state == THREAD_BLOCKED && threads[i].wait_channel == channel) {
+    if (threads[i].state == THREAD_BLOCKED &&
+        threads[i].wait_channel == channel) {
       threads[i].state = THREAD_READY;
       threads[i].wait_channel = 0;
     }
@@ -408,6 +445,26 @@ fd_slot_t *sched_fd_get(int fd) {
   return &threads[current_thread].fds[fd];
 }
 
+fd_slot_t *sched_fd_get_for(int tid, int fd) {
+  if (tid < 0 || tid >= thread_capacity || fd < 0 || fd >= THREAD_MAX_FDS)
+    return 0;
+
+  if (threads[tid].fds[fd].kind == FD_KIND_UNUSED)
+    return 0;
+
+  return &threads[tid].fds[fd];
+}
+
+int sched_fd_set(int tid, int fd, int kind, int handle) {
+  if (tid < 0 || tid >= thread_capacity || fd < 0 || fd >= THREAD_MAX_FDS)
+    return -1;
+
+  threads[tid].fds[fd].kind = kind;
+  threads[tid].fds[fd].handle = handle;
+  threads[tid].fds[fd].cursor = 0;
+  return 0;
+}
+
 void sched_set_priority(int tid, thread_priority_t priority) {
   if (tid < 0 || tid >= thread_capacity)
     return;
@@ -417,9 +474,7 @@ void sched_set_priority(int tid, thread_priority_t priority) {
   threads[tid].priority = priority;
 }
 
-void sched_exit(void) {
-  sched_exit_status(-1);
-}
+void sched_exit(void) { sched_exit_status(-1); }
 
 void sched_exit_status(int status) {
   if (current_thread == -1)
@@ -450,7 +505,47 @@ void sched_exit_status(int status) {
   irq_restore(flags);
 }
 
+int sched_kill(int tid, int status) {
+  if (tid < 0 || tid >= thread_capacity)
+    return -1;
+
+  if (tid == current_thread) {
+    sched_exit_status(status);
+    __builtin_unreachable();
+  }
+
+  unsigned long long flags = irq_save();
+
+  if (threads[tid].state == THREAD_UNUSED ||
+      threads[tid].state == THREAD_ZOMBIE) {
+    irq_restore(flags);
+    return -1;
+  }
+
+  threads[tid].state = THREAD_ZOMBIE;
+  threads[tid].wait_channel = 0;
+
+  irq_restore(flags);
+
+  process_mark_exited(tid, status);
+
+  return 0;
+}
+
 int sched_current_tid(void) { return current_thread; }
+
+unsigned int sched_get_uid(int tid) {
+  if (tid < 0 || tid >= thread_capacity)
+    return 0;
+  return threads[tid].uid;
+}
+
+int sched_set_uid(int tid, unsigned int uid) {
+  if (tid < 0 || tid >= thread_capacity)
+    return -1;
+  threads[tid].uid = uid;
+  return 0;
+}
 void *sched_current_context(void) {
   if (current_thread < 0 || current_thread >= thread_capacity)
     return 0;

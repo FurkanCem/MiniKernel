@@ -4,13 +4,14 @@
 #include "kernel/fs.h"
 #include "kernel/heap.h"
 #include "kernel/io.h"
+#include "kernel/pipe.h"
 #include "kernel/pmm.h"
 #include "kernel/thread.h"
 #include "kernel/vmm.h"
 #include "kernel/vmm_stack.h"
 
 extern void enter_usermode(void (*entry)(void), void *user_stack_top,
-                            unsigned long long arg0, unsigned long long arg1);
+                           unsigned long long arg0, unsigned long long arg1);
 extern void user_demo_entry(void);
 
 #define USER_PML4_SLOT_BASE 0x0000008000000000ULL
@@ -120,11 +121,10 @@ static int user_process_layout(int tid, unsigned long long *out_image_base,
 
 static int setup_user_stack(vmm_address_space_t space,
                             unsigned long long stack_ceiling,
-                            const char *argv_str,
-                             unsigned long long argv_len,
-                             unsigned long long *out_stack_top,
-                             unsigned long long *out_argv_uaddr,
-                             unsigned long long *out_argv_len) {
+                            const char *argv_str, unsigned long long argv_len,
+                            unsigned long long *out_stack_top,
+                            unsigned long long *out_argv_uaddr,
+                            unsigned long long *out_argv_len) {
   unsigned long long first_page =
       (stack_ceiling - PMM_FRAME_SIZE) & ~(PMM_FRAME_SIZE - 1);
 
@@ -132,8 +132,7 @@ static int setup_user_stack(vmm_address_space_t space,
   if (frame == 0)
     return -1;
 
-  if (vmm_map_page_in(space, first_page, frame, VMM_WRITABLE | VMM_USER) !=
-      0) {
+  if (vmm_map_page_in(space, first_page, frame, VMM_WRITABLE | VMM_USER) != 0) {
     pmm_free_frame(frame);
     return -1;
   }
@@ -157,8 +156,7 @@ static int setup_user_stack(vmm_address_space_t space,
 }
 
 static void elf_process_trampoline(void) {
-  elf_spawn_request_t *request =
-      (elf_spawn_request_t *)sched_current_context();
+  elf_spawn_request_t *request = (elf_spawn_request_t *)sched_current_context();
   sched_set_current_context(0);
 
   if (request == 0)
@@ -211,8 +209,8 @@ static void elf_process_trampoline(void) {
   }
 
   unsigned long long stack_top, argv_uaddr, argv_actual_len;
-  if (setup_user_stack(space, stack_ceiling, argv, argv_len, &stack_top, &argv_uaddr,
-                        &argv_actual_len) != 0) {
+  if (setup_user_stack(space, stack_ceiling, argv, argv_len, &stack_top,
+                       &argv_uaddr, &argv_actual_len) != 0) {
     process_exit(-1);
   }
 
@@ -221,9 +219,9 @@ static void elf_process_trampoline(void) {
 }
 
 static int spawn_elf_request(const unsigned char *elf_data,
-                              unsigned long long elf_size, int owns_data,
-                              const char *argv_str,
-                              unsigned long long argv_len) {
+                             unsigned long long elf_size, int owns_data,
+                             const char *argv_str,
+                             unsigned long long argv_len) {
   elf_spawn_request_t *request =
       (elf_spawn_request_t *)kmalloc(sizeof(elf_spawn_request_t));
   if (request == 0) {
@@ -270,12 +268,12 @@ static int spawn_elf_request(const unsigned char *elf_data,
 }
 
 int process_spawn_from_elf(const unsigned char *elf_data,
-                            unsigned long long elf_size) {
+                           unsigned long long elf_size) {
   return spawn_elf_request(elf_data, elf_size, 0, 0, 0);
 }
 
 int process_spawn_from_file(const char *name, const char *argv_str,
-                             unsigned long long argv_len) {
+                            unsigned long long argv_len) {
   const fs_dirent_t *entry = fs_find(name);
   if (entry == 0)
     return -1;
@@ -290,7 +288,41 @@ int process_spawn_from_file(const char *name, const char *argv_str,
   }
 
   return spawn_elf_request((const unsigned char *)buf, entry->size_bytes, 1,
-                            argv_str, argv_len);
+                           argv_str, argv_len);
+}
+
+int process_spawn_from_file_redirect(const char *name, const char *argv_str,
+                                     unsigned long long argv_len, int stdin_fd,
+                                     int stdout_fd) {
+  unsigned long long flags = irq_save();
+
+  int pid = process_spawn_from_file(name, argv_str, argv_len);
+  if (pid < 0) {
+    irq_restore(flags);
+    return -1;
+  }
+
+  process_t *process = find_process(pid);
+  int tid = (process != 0) ? process->tid : -1;
+
+  if (tid >= 0 && stdin_fd >= 0) {
+    fd_slot_t *src = sched_fd_get(stdin_fd);
+    if (src != 0 && src->kind == FD_KIND_PIPE_READ) {
+      pipe_add_reader(src->handle);
+      sched_fd_set(tid, 0, FD_KIND_PIPE_READ, src->handle);
+    }
+  }
+
+  if (tid >= 0 && stdout_fd >= 0) {
+    fd_slot_t *src = sched_fd_get(stdout_fd);
+    if (src != 0 && src->kind == FD_KIND_PIPE_WRITE) {
+      pipe_add_writer(src->handle);
+      sched_fd_set(tid, 1, FD_KIND_PIPE_WRITE, src->handle);
+    }
+  }
+
+  irq_restore(flags);
+  return pid;
 }
 
 int process_spawn_builtin_demo(void) {
@@ -337,6 +369,30 @@ void process_mark_exited(int tid, int status) {
   process->exit_status = status;
   process->state = PROCESS_EXITED;
   sched_wakeup((const void *)(unsigned long long)process->pid);
+}
+
+#define SIGNAL_EXIT_STATUS(sig) (-128 - (sig))
+
+int process_get_tid(int pid) {
+  unsigned long long flags = irq_save();
+  process_t *process = find_process(pid);
+  int tid =
+      (process != 0 && process->state != PROCESS_EXITED) ? process->tid : -1;
+  irq_restore(flags);
+  return tid;
+}
+
+int process_kill(int pid, int sig) {
+  unsigned long long flags = irq_save();
+  process_t *process = find_process(pid);
+  int tid =
+      (process != 0 && process->state != PROCESS_EXITED) ? process->tid : -1;
+  irq_restore(flags);
+
+  if (tid < 0)
+    return -1;
+
+  return sched_kill(tid, SIGNAL_EXIT_STATUS(sig));
 }
 
 void process_reap_thread(int tid, vmm_address_space_t space) {

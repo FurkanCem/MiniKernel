@@ -19,6 +19,14 @@
 #define SYS_SET_CURSOR 14
 #define SYS_DRAW_ROW 15
 #define SYS_SCREEN_INFO 16
+#define SYS_KILL 17
+#define SYS_PIPE 18
+#define SYS_SPAWN_REDIRECT 19
+#define SYS_GETUID 20
+#define SYS_CHMOD 21
+#define SYS_LOGIN 22
+#define SYS_ADDUSER 23
+#define SYS_USERNAME 24
 
 void syscall_handler(registers_t *regs);
 

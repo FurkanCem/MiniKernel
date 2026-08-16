@@ -11,7 +11,7 @@ MAX_ENTRIES = 16
 # into (as opposed to the read-only MFS1 region built above, which only
 # ever holds binaries baked in at build time).
 UFS_BASE_LBA = 8192
-UFS_DIR_SECTORS = 4
+UFS_DIR_SECTORS = 5
 UFS_DATA_LBA = UFS_BASE_LBA + 1 + UFS_DIR_SECTORS
 UFS_DATA_RESERVED_SECTORS = 8192
 

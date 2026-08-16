@@ -148,6 +148,91 @@ static void cmd_cat(const char *name) {
   sys_close((int)fd);
 }
 
+static void cmd_chmod(const char *args) {
+  char name[32];
+  unsigned long i = 0;
+  while (args[i] != '\0' && args[i] != ' ' && i < sizeof(name) - 1) {
+    name[i] = args[i];
+    i++;
+  }
+  name[i] = '\0';
+
+  const char *mode = args + i;
+  while (*mode == ' ')
+    mode++;
+
+  unsigned long perm;
+  if (str_eq(mode, "private")) {
+    perm = 0;
+  } else if (str_eq(mode, "readonly")) {
+    perm = UFS_PERM_OTHER_READ;
+  } else if (str_eq(mode, "public")) {
+    perm = UFS_PERM_OTHER_READ | UFS_PERM_OTHER_WRITE;
+  } else {
+    print("usage: chmod <name> private|readonly|public\n");
+    return;
+  }
+
+  if (name[0] == '\0' || sys_chmod(name, perm) < 0) {
+    print("chmod: failed (not found, or you don't own it)\n");
+    return;
+  }
+
+  print("chmod: ");
+  print(name);
+  print(" is now ");
+  print(mode);
+  print("\n");
+}
+
+/* usage: useradd <username> <password> <uid> - root only (the kernel
+ * enforces this; a non-root caller just gets sys_adduser() failing). */
+static void cmd_useradd(const char *args) {
+  char username[20];
+  unsigned long i = 0;
+  while (args[i] != '\0' && args[i] != ' ' && i < sizeof(username) - 1) {
+    username[i] = args[i];
+    i++;
+  }
+  username[i] = '\0';
+
+  const char *p = args + i;
+  while (*p == ' ')
+    p++;
+
+  char password[32];
+  unsigned long j = 0;
+  while (*p != '\0' && *p != ' ' && j < sizeof(password) - 1) {
+    password[j++] = *p++;
+  }
+  password[j] = '\0';
+
+  while (*p == ' ')
+    p++;
+
+  long uid = 0;
+  int have_uid = 0;
+  while (*p >= '0' && *p <= '9') {
+    uid = uid * 10 + (*p - '0');
+    p++;
+    have_uid = 1;
+  }
+
+  if (username[0] == '\0' || password[0] == '\0' || !have_uid) {
+    print("usage: useradd <username> <password> <uid>\n");
+    return;
+  }
+
+  if (sys_adduser(username, password, (unsigned long)uid) < 0) {
+    print("useradd: failed (not root, bad name, or already exists)\n");
+    return;
+  }
+
+  print("useradd: created ");
+  print(username);
+  print("\n");
+}
+
 static void cmd_rm(const char *name) {
   if (name[0] == '\0') {
     print("usage: rm <name>\n");
@@ -166,12 +251,99 @@ static void cmd_rm(const char *name) {
   print("\n");
 }
 
+/* Finds a top-level pipe separator in `line` (splitting cmd1 | cmd2).
+ * Returns its index, or -1 if there isn't one. Accepts ',' as well as
+ * '|': this kernel's keyboard layout has no AltGr support and every
+ * key is already mapped to something else, so '|' currently can't
+ * actually be typed - ',' is a typable stand-in until that's fixed.
+ * Only a single pipe stage is supported for now - `a | b | c` is not
+ * parsed as a 3-stage pipeline. */
+static long find_pipe(const char *line) {
+  for (long i = 0; line[i] != '\0'; i++) {
+    if (line[i] == '|' || line[i] == ',')
+      return i;
+  }
+  return -1;
+}
+
+static void trim(char *s) {
+  unsigned long len = str_len(s);
+  while (len > 0 && s[len - 1] == ' ') {
+    s[--len] = '\0';
+  }
+  unsigned long start = 0;
+  while (s[start] == ' ')
+    start++;
+  if (start > 0) {
+    unsigned long i = 0;
+    while (s[start + i] != '\0') {
+      s[i] = s[start + i];
+      i++;
+    }
+    s[i] = '\0';
+  }
+}
+
+static void cmd_pipeline(char *line, long pipe_at) {
+  char left[LINE_MAX];
+  char right[LINE_MAX];
+
+  unsigned long li = 0;
+  for (long i = 0; i < pipe_at; i++)
+    left[li++] = line[i];
+  left[li] = '\0';
+
+  unsigned long ri = 0;
+  for (long i = pipe_at + 1; line[i] != '\0'; i++)
+    right[ri++] = line[i];
+  right[ri] = '\0';
+
+  trim(left);
+  trim(right);
+
+  if (left[0] == '\0' || right[0] == '\0') {
+    print("usage: cmd1 | cmd2\n");
+    return;
+  }
+
+  long fds[2];
+  if (sys_pipe(fds) < 0) {
+    print("pipe: could not create\n");
+    return;
+  }
+  long read_fd = fds[0];
+  long write_fd = fds[1];
+
+  long pid1 = sys_spawn_redirect(left, str_len(left), -1, write_fd);
+  long pid2 = sys_spawn_redirect(right, str_len(right), read_fd, -1);
+
+  /* Our own copies of the pipe fds must be closed so the pipe's
+   * refcounts reflect only the two children - otherwise cmd2 would
+   * never see EOF (our copy of the write end would still count as an
+   * open writer) even after cmd1 exits. */
+  sys_close((int)read_fd);
+  sys_close((int)write_fd);
+
+  if (pid1 < 0 || pid2 < 0) {
+    print("pipe: spawn failed\n");
+  }
+  if (pid1 >= 0)
+    sys_wait(pid1);
+  if (pid2 >= 0)
+    sys_wait(pid2);
+}
+
 __attribute__((section(".text._start"))) void _start(void) {
   char line[LINE_MAX];
 
   print("MiniKernel userspace shell\n");
   print("type a program name to run it, 'ls' to list files, 'exit' to quit\n");
   print("'write <name>' / 'cat <name>' / 'rm <name>' for persistent files\n");
+  print("'chmod <name> private|readonly|public' to set who else can access it\n");
+  print("'useradd <name> <password> <uid>' to create an account (root only)\n");
+  print("'bg <program>' to run in the background, 'kill <pid>' to stop it\n");
+  print("'cmd1 | cmd2' to pipe one program's output into another\n");
+  print("(this keyboard layout has no | key yet - use ',' instead)\n");
 
   for (;;) {
     print("sh> ");
@@ -180,6 +352,12 @@ __attribute__((section(".text._start"))) void _start(void) {
 
     if (len == 0)
       continue;
+
+    long pipe_at = find_pipe(line);
+    if (pipe_at >= 0) {
+      cmd_pipeline(line, pipe_at);
+      continue;
+    }
 
     if (str_eq(line, "exit")) {
       sys_exit(0);
@@ -202,6 +380,51 @@ __attribute__((section(".text._start"))) void _start(void) {
 
     if (str_starts_with(line, "rm ")) {
       cmd_rm(line + 3);
+      continue;
+    }
+
+    if (str_starts_with(line, "chmod ")) {
+      cmd_chmod(line + 6);
+      continue;
+    }
+
+    if (str_starts_with(line, "useradd ")) {
+      cmd_useradd(line + 8);
+      continue;
+    }
+
+    if (str_starts_with(line, "bg ")) {
+      long pid = sys_spawn(line + 3, len - 3);
+      if (pid < 0) {
+        print("spawn failed: ");
+        print(line + 3);
+        print("\n");
+      } else {
+        print("started in background, pid ");
+        print_ulong((unsigned long)pid);
+        print("\n");
+      }
+      continue;
+    }
+
+    if (str_starts_with(line, "kill ")) {
+      long pid = 0;
+      const char *p = line + 5;
+      while (*p >= '0' && *p <= '9') {
+        pid = pid * 10 + (*p - '0');
+        p++;
+      }
+      if (pid <= 0) {
+        print("usage: kill <pid>\n");
+      } else if (sys_kill(pid, SIGKILL) < 0) {
+        print("kill: no such process: ");
+        print_ulong((unsigned long)pid);
+        print("\n");
+      } else {
+        print("killed pid ");
+        print_ulong((unsigned long)pid);
+        print("\n");
+      }
       continue;
     }
 

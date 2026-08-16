@@ -18,7 +18,7 @@ static unsigned int str_len(const char *s) {
 static void cmd_help(void) {
   print_str("\ncommands: help, clear, echo <text>, meminfo, alloctest, "
             "vmmtest, heaptest, threadtest, largethreadtest, usermodetest, "
-            "elftest, ufstest, ls, run <name>, poweroff");
+            "elftest, ufstest, permtest, ls, run <name>, setuid <pid> <uid>, poweroff");
 }
 
 static void cmd_clear(void) {
@@ -55,6 +55,7 @@ static const exact_command_t exact_commands[] = {
     {"usermodetest", cmd_usermodetest, 0},
     {"elftest", cmd_elftest, 0},
     {"ufstest", cmd_ufstest, 0},
+    {"permtest", cmd_permtest, 0},
     {"ls", cmd_ls, 0},
     {"clear", cmd_clear, 1},
     {"poweroff", cmd_poweroff, 1},
@@ -64,6 +65,7 @@ static const exact_command_t exact_commands[] = {
 static const prefix_command_t prefix_commands[] = {
     {"run ", cmd_run},
     {"echo ", cmd_echo},
+    {"setuid ", cmd_setuid},
 };
 #define PREFIX_COMMAND_COUNT (sizeof(prefix_commands) / sizeof(prefix_commands[0]))
 

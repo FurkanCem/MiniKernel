@@ -20,6 +20,8 @@ void cmd_elftest(void);
 void cmd_ufstest(void);
 void cmd_ls(void);
 void cmd_run(const char *name);
+void cmd_setuid(const char *args);
+void cmd_permtest(void);
 void cmd_poweroff(void);
 
 #endif

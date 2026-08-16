@@ -6,15 +6,29 @@
 
 #define UFS_BASE_LBA 8192
 #define UFS_SB_LBA (UFS_BASE_LBA + 0)
-#define UFS_DIR_SECTORS 4 /* 2048 bytes / 32 bytes per entry = 64 files */
+#define UFS_DIR_SECTORS 5 /* 2560 bytes / 40 bytes per entry = 64 files */
 #define UFS_DIR_LBA (UFS_BASE_LBA + 1)
 #define UFS_DATA_LBA (UFS_DIR_LBA + UFS_DIR_SECTORS)
 #define UFS_DATA_RESERVED_SECTORS 8192 /* 4 MiB of user data */
 #define UFS_DATA_END_LBA (UFS_DATA_LBA + UFS_DATA_RESERVED_SECTORS)
 
-#define UFS_ENTRY_SIZE 32
+#define UFS_ENTRY_SIZE 40
 #define UFS_MAX_ENTRIES ((UFS_DIR_SECTORS * SECTOR_SIZE) / UFS_ENTRY_SIZE)
 #define UFS_NAME_MAX 20
+/* Entry layout within UFS_ENTRY_SIZE bytes:
+ *   [0..19]  name (null-padded; name[0]==0 means the slot is free)
+ *   [20..23] start_lba
+ *   [24..27] size_bytes
+ *   [28..31] capacity_sectors
+ *   [32..35] owner_uid
+ *   [36]     perm (UFS_PERM_* bits)
+ *   [37..39] reserved
+ */
+#define UFS_OFF_START_LBA 20
+#define UFS_OFF_SIZE 24
+#define UFS_OFF_CAPACITY 28
+#define UFS_OFF_OWNER 32
+#define UFS_OFF_PERM 36
 
 static unsigned char superblock[SECTOR_SIZE];
 static unsigned char directory[UFS_DIR_SECTORS * SECTOR_SIZE];
@@ -168,7 +182,9 @@ const ufs_dirent_t *ufs_entry(unsigned int index) {
     if (seen == index) {
       for (unsigned int j = 0; j < UFS_NAME_MAX; j++)
         out.name[j] = (char)e[j];
-      out.size_bytes = read_u32(e + 24);
+      out.size_bytes = read_u32(e + UFS_OFF_SIZE);
+      out.owner_uid = read_u32(e + UFS_OFF_OWNER);
+      out.perm = e[UFS_OFF_PERM];
       return &out;
     }
     seen++;
@@ -190,7 +206,7 @@ int ufs_find(const char *name) {
   return -1;
 }
 
-int ufs_create(const char *name) {
+int ufs_create(const char *name, unsigned int owner_uid) {
   if (!ufs_ready)
     return -1;
 
@@ -212,9 +228,11 @@ int ufs_create(const char *name) {
 
   unsigned char *e = entry_at((unsigned int)slot);
   set_name(e, name);
-  write_u32(e + 20, 0); /* start_lba, allocated lazily on first write */
-  write_u32(e + 24, 0); /* size_bytes */
-  write_u32(e + 28, 0); /* capacity_sectors */
+  write_u32(e + UFS_OFF_START_LBA, 0); /* allocated lazily on first write */
+  write_u32(e + UFS_OFF_SIZE, 0);
+  write_u32(e + UFS_OFF_CAPACITY, 0);
+  write_u32(e + UFS_OFF_OWNER, owner_uid);
+  e[UFS_OFF_PERM] = 0; /* private by default - only the owner can touch it */
 
   cached_file_count++;
 
@@ -246,6 +264,30 @@ static int handle_valid(int handle) {
          entry_at((unsigned int)handle)[0] != 0;
 }
 
+unsigned int ufs_owner(int handle) {
+  if (!handle_valid(handle))
+    return 0;
+  return read_u32(entry_at((unsigned int)handle) + UFS_OFF_OWNER);
+}
+
+unsigned char ufs_perm(int handle) {
+  if (!handle_valid(handle))
+    return 0;
+  return entry_at((unsigned int)handle)[UFS_OFF_PERM];
+}
+
+int ufs_chmod(int handle, unsigned char perm) {
+  if (!handle_valid(handle))
+    return -1;
+
+  entry_at((unsigned int)handle)[UFS_OFF_PERM] = perm;
+
+  if (persist_directory() != 0 || persist_superblock() != 0)
+    return -1;
+
+  return 0;
+}
+
 unsigned int ufs_size(int handle) {
   if (!handle_valid(handle))
     return 0;
@@ -273,9 +315,6 @@ static unsigned int sectors_for_bytes(unsigned int bytes) {
   return (bytes + SECTOR_SIZE - 1) / SECTOR_SIZE;
 }
 
-/* Grows a file's on-disk capacity to hold `needed_bytes`, allocating a
- * fresh region from the bump allocator and copying existing data over
- * if the file was already holding some. No-op if it already fits. */
 static int ensure_capacity(int handle, unsigned int needed_bytes) {
   unsigned char *e = entry_at((unsigned int)handle);
   unsigned int cur_capacity_sectors = read_u32(e + 28);

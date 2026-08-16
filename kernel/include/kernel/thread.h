@@ -16,6 +16,8 @@ typedef enum {
 #define FD_KIND_CONSOLE 1
 #define FD_KIND_MEMFS 2
 #define FD_KIND_UFS 3
+#define FD_KIND_PIPE_READ 4
+#define FD_KIND_PIPE_WRITE 5
 
 #define THREAD_MAX_FDS 8
 
@@ -42,12 +44,17 @@ void sched_wait(int tid);
 int sched_fd_open(int kind, int handle);
 int sched_fd_close(int fd);
 fd_slot_t *sched_fd_get(int fd);
+fd_slot_t *sched_fd_get_for(int tid, int fd);
+int sched_fd_set(int tid, int fd, int kind, int handle);
 
 void sched_exit(void);
 void sched_exit_status(int status);
+int sched_kill(int tid, int status);
 void sched_reap_thread(int tid);
 int sched_is_alive(int);
 int sched_current_tid(void);
+unsigned int sched_get_uid(int tid);
+int sched_set_uid(int tid, unsigned int uid);
 void *sched_current_context(void);
 void sched_set_current_context(void *context);
 #endif
